@@ -1,0 +1,10 @@
+[package]
+name = "rproxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+config = "0.13.1"
+serde = "1.0.8"
+serde_derive = "1.0.8"
