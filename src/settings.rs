@@ -5,7 +5,15 @@ use serde_derive::Deserialize;
 #[allow(unused)]
 pub struct Settings {
     pub listen: String,
-    pub target: String
+    pub target: String,
+    pub tls: Option<TLS>
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct TLS {
+    pub certificate: String,
+    pub key: String
 }
 
 impl Settings {
