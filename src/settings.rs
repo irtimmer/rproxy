@@ -5,7 +5,7 @@ use serde_derive::Deserialize;
 #[allow(unused)]
 pub struct Settings {
     pub listen: String,
-    pub target: String,
+    pub handler: Handler,
     pub tls: Option<TLS>
 }
 
@@ -14,6 +14,19 @@ pub struct Settings {
 pub struct TLS {
     pub certificate: String,
     pub key: String
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+#[serde(tag = "type")]
+pub enum Handler {
+    Tunnel(Tunnel)
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Tunnel {
+    pub target: String
 }
 
 impl Settings {
