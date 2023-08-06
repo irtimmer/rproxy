@@ -12,17 +12,17 @@ use std::io::{self, BufReader, ErrorKind};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::handler::Handler;
-use crate::io::IO;
+use crate::handler::{SendableHandler, Handler};
+use crate::io::SendableAsyncStream;
 use crate::settings;
 
 pub struct TlsHandler {
     acceptor: TlsAcceptor,
-    handler: Box<dyn Handler + Sync + Send + Unpin>
+    handler: SendableHandler
 }
 
 impl TlsHandler {
-    pub fn new(settings: settings::TLS, handler: Box<dyn Handler + Sync + Send + Unpin>) -> Result<Self, rustls::Error> {
+    pub fn new(settings: settings::TLS, handler: SendableHandler) -> Result<Self, rustls::Error> {
         let certificates = load_certs(Path::new(&settings.certificate)).unwrap();
         let mut keys = load_keys(Path::new(&settings.key)).unwrap();
 
@@ -40,10 +40,10 @@ impl TlsHandler {
 
 #[async_trait]
 impl Handler for TlsHandler {
-    async fn handle(&self, stream: Box<IO>) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
         let stream = self.acceptor.accept(stream).await?;
 
-        self.handler.handle(Box::new(stream)).await?;
+        self.handler.handle(Box::pin(stream)).await?;
         Ok(())
     }
 }

@@ -6,7 +6,7 @@ use tokio::io::copy_bidirectional;
 use std::error::Error;
 
 use crate::handler::Handler;
-use crate::io::IO;
+use crate::io::SendableAsyncStream;
 
 pub struct TunnelHandler {
     target: String
@@ -22,7 +22,7 @@ impl TunnelHandler {
 
 #[async_trait]
 impl Handler for TunnelHandler {
-    async fn handle(&self, mut inbound: Box<IO>) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, mut inbound: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
         let mut outbound = TcpStream::connect(&self.target).await?;
         let r = copy_bidirectional(&mut inbound, &mut outbound).await;
         if let Err(e) = r {

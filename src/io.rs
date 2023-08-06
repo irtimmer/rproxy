@@ -1,7 +1,9 @@
-use tokio::{io::{AsyncWrite, AsyncRead}, net::TcpStream};
-use tokio_rustls::server::TlsStream;
+use std::pin::Pin;
 
-pub trait IO: AsyncWrite + AsyncRead {}
+use tokio::io::{AsyncWrite, AsyncRead};
 
-impl IO for TcpStream {}
-impl IO for TlsStream<TcpStream> {}
+pub trait AsyncStream: AsyncWrite + AsyncRead {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin> AsyncStream for T {}
+
+pub type SendableAsyncStream = Pin<Box<dyn AsyncStream + Send + Sync>>;

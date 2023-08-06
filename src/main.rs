@@ -8,7 +8,7 @@ mod settings;
 mod tls;
 mod tunnel;
 
-use handler::Handler;
+use handler::SendableHandler;
 use tunnel::TunnelHandler;
 use listener::{Listener, TcpListener};
 use settings::Settings;
@@ -20,15 +20,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Listening on: {}", settings.listen);
 
-    let mut handler: Box<dyn Handler + Send + Sync + Unpin> = match settings.handler {
+    let mut handler: SendableHandler = match settings.handler {
         settings::Handler::Tunnel(settings) => {
             println!("Proxying to: {}", settings.target);
-            Box::new(TunnelHandler::new(settings.target))
+            Box::pin(TunnelHandler::new(settings.target))
         }
     };
 
     if let Some(tls_settings) = settings.tls {
-        handler = Box::new(TlsHandler::new(tls_settings, handler)?)
+        handler = Box::pin(TlsHandler::new(tls_settings, handler)?)
     }
 
     let listener = TcpListener::new(settings.listen).await?;
