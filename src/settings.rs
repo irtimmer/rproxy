@@ -20,6 +20,7 @@ pub struct TLS {
 #[allow(unused)]
 #[serde(tag = "type")]
 pub enum Handler {
+    Http,
     Tunnel(Tunnel)
 }
 

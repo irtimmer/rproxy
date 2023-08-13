@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+hyper = { version = "1.0.0-rc.4", features = ["server", "client", "http1"] }
+hyper-util = { git = "https://github.com/hyperium/hyper-util.git" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
 async-trait = "0.1.72"
 config = "0.13.1"
@@ -11,3 +13,4 @@ serde = "1.0.8"
 serde_derive = "1.0.8"
 tokio-rustls = "0.23"
 rustls-pemfile = "1.0"
+http-body-util = "0.1.0-rc.3"

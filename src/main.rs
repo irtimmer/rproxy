@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::sync::Arc;
 
 mod io;
 mod handler;
@@ -7,12 +8,14 @@ mod settings;
 
 mod tls;
 mod tunnel;
+mod http;
 
 use handler::SendableHandler;
 use tunnel::TunnelHandler;
 use listener::{Listener, TcpListener};
 use settings::Settings;
 use tls::TlsHandler;
+use http::{HttpHandler, HttpService, HelloService, ProxyService};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -24,6 +27,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         settings::Handler::Tunnel(settings) => {
             println!("Proxying to: {}", settings.target);
             Box::pin(TunnelHandler::new(settings.target))
+        },
+        settings::Handler::Http(settings) => {
+            println!("Providing HTTP service");
+            let http_service: Arc<dyn HttpService + Send + Sync> = match settings.service {
+                settings::Service::Hello => Arc::new(HelloService {}),
+                settings::Service::Proxy(settings) => Arc::new(ProxyService::new(settings.uri.try_into()?))
+            };
+            Box::pin(HttpHandler::new(http_service))
         }
     };
 
