@@ -2,7 +2,8 @@ use async_trait::async_trait;
 
 use rustls_pemfile::{certs, pkcs8_private_keys};
 
-use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::server::Acceptor;
+use tokio_rustls::{TlsAcceptor, LazyConfigAcceptor};
 use tokio_rustls::rustls::{self, Certificate, PrivateKey};
 use tokio_rustls::rustls::ServerConfig;
 
@@ -19,6 +20,12 @@ use crate::settings;
 pub struct TlsHandler {
     acceptor: TlsAcceptor,
     handler: SendableHandler
+}
+
+pub struct LazyTlsHandler {
+    handler: SendableHandler,
+    certificates: Vec<Certificate>,
+    key: PrivateKey
 }
 
 impl TlsHandler {
@@ -38,10 +45,38 @@ impl TlsHandler {
     }
 }
 
+impl LazyTlsHandler {
+    pub fn new(settings: &settings::Tls, handler: SendableHandler) -> io::Result<Self> {
+        Ok(Self {
+            handler,
+            certificates: load_certs(Path::new(&settings.certificate))?,
+            key: load_keys(Path::new(&settings.key))?.remove(0)
+        })
+    }
+}
+
 #[async_trait]
 impl Handler for TlsHandler {
     async fn handle(&self, stream: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
         let stream = self.acceptor.accept(stream).await?;
+
+        self.handler.handle(Box::pin(stream)).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Handler for LazyTlsHandler {
+    async fn handle(&self, stream: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
+        let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
+
+        let config = Arc::new(ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(self.certificates.clone(), self.key.clone())?);
+
+
+        let stream = acceptor.into_stream(config).await?;
 
         self.handler.handle(Box::pin(stream)).await?;
         Ok(())

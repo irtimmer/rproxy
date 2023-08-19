@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::handler::{self};
 use crate::listener::{self, TcpListener};
 use crate::http::{self, HttpHandler, HelloService, ProxyService};
-use crate::tls::TlsHandler;
+use crate::tls::{TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
 #[derive(Debug, Deserialize)]
@@ -47,7 +47,8 @@ pub struct Tls {
 pub enum Handler {
     Http(Http),
     Tunnel(Tunnel),
-    Tls(Tls)
+    Tls(Tls),
+    LazyTls(Tls)
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +98,7 @@ pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler
     let handler: Box<dyn handler::Handler + Send + Sync + Unpin> = match handler {
         Handler::Tunnel(s) => Box::new(TunnelHandler::new(s.target.clone())),
         Handler::Tls(s) => Box::new(TlsHandler::new(s, build_handler(&s.handler).await?)?),
+        Handler::LazyTls(s) => Box::new(LazyTlsHandler::new(s, build_handler(&s.handler).await?)?),
         Handler::Http(s) => Box::new(HttpHandler::new(build_service(&s.service).await?)),
     };
     Ok(handler)
