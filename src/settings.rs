@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::handler::{self};
 use crate::listener::{self, TcpListener};
-use crate::http::{self, HttpHandler, HelloService, ProxyService};
+use crate::http::{self, Http1Handler, Http2Handler, HelloService, ProxyService};
 use crate::tls::{TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
@@ -45,7 +45,8 @@ pub struct Tls {
 #[allow(unused)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Handler {
-    Http(Http),
+    Http1(Http),
+    Http2(Http),
     Tunnel(Tunnel),
     Tls(Tls),
     LazyTls(Tls)
@@ -99,7 +100,8 @@ pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler
         Handler::Tunnel(s) => Box::new(TunnelHandler::new(s.target.clone())),
         Handler::Tls(s) => Box::new(TlsHandler::new(s, build_handler(&s.handler).await?)?),
         Handler::LazyTls(s) => Box::new(LazyTlsHandler::new(s, build_handler(&s.handler).await?)?),
-        Handler::Http(s) => Box::new(HttpHandler::new(build_service(&s.service).await?)),
+        Handler::Http1(s) => Box::new(Http1Handler::new(build_service(&s.service).await?)),
+        Handler::Http2(s) => Box::new(Http2Handler::new(build_service(&s.service).await?))
     };
     Ok(handler)
 }
