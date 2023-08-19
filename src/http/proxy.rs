@@ -13,15 +13,38 @@ use hyper::{Request, Response, Uri};
 
 use tokio::net::TcpStream;
 
+use tokio_rustls::rustls::{ClientConfig, OwnedTrustAnchor, RootCertStore, ServerName};
+use tokio_rustls::TlsConnector;
+
+use crate::io::AsyncStream;
+
 use super::HttpService;
 
 pub struct ProxyService {
+    connector: TlsConnector,
     uri: Uri
 }
 
 impl ProxyService {
     pub fn new(uri: Uri) -> Self {
+        let mut root_store = RootCertStore::empty();
+        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
+            OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
+
+        let config = Arc::new(
+            ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(root_store)
+                .with_no_client_auth(),
+        );
+
         ProxyService {
+            connector: TlsConnector::from(config),
             uri
         }
     }
@@ -39,7 +62,17 @@ impl HttpService for ProxyService {
         let port = self.uri.port_u16().unwrap_or(80);
         let addr = format!("{}:{}", host, port);
 
-        let socket = TcpStream::connect(addr).await?;
+        let socket: Box<dyn AsyncStream + Send + Unpin> =
+            match self.uri.scheme().ok_or("No scheme specified")?.as_str() {
+                "http" => Box::new(TcpStream::connect(addr).await?),
+                "https" => {
+                    let socket = TcpStream::connect(addr).await?;
+                    let server_name = ServerName::try_from(host.as_str())
+                        .or_else(|_| socket.peer_addr().map(|s| ServerName::IpAddress(s.ip())))?;
+                    Box::new(self.connector.connect(server_name, socket).await?)
+                }
+                _ => return Err("Invalid scheme".into()),
+            };
         let stream = TokioIo::new(socket);
 
         let (mut sender, conn) = Builder::new()
