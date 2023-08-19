@@ -5,6 +5,7 @@ use tokio::io;
 
 use std::sync::Arc;
 
+use crate::handler::Context;
 use crate::handler::Handler;
 use crate::handler::SendableHandler;
 
@@ -33,7 +34,7 @@ impl Listener for TcpListener {
         while let Ok((stream, _)) = self.listener.accept().await {
             let handler = self.handler.clone();
             tokio::spawn(async move {
-                let r = handler.handle(Box::pin(stream)).await;
+                let r = handler.handle(Box::pin(stream), Context::default()).await;
                 if let Err(e) = r {
                     println!("Error while handling {}", e);
                 }

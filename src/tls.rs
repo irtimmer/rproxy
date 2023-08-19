@@ -13,7 +13,7 @@ use std::io::{self, BufReader, ErrorKind};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::handler::{SendableHandler, Handler};
+use crate::handler::{SendableHandler, Handler, Context};
 use crate::io::SendableAsyncStream;
 use crate::settings;
 
@@ -61,17 +61,19 @@ impl LazyTlsHandler {
 
 #[async_trait]
 impl Handler for TlsHandler {
-    async fn handle(&self, stream: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: SendableAsyncStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
         let stream = self.acceptor.accept(stream).await?;
+        let (_, conn) = stream.get_ref();
+        ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
 
-        self.handler.handle(Box::pin(stream)).await?;
+        self.handler.handle(Box::pin(stream), ctx).await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl Handler for LazyTlsHandler {
-    async fn handle(&self, stream: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: SendableAsyncStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
         let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
 
         let mut config = ServerConfig::builder()
@@ -84,8 +86,10 @@ impl Handler for LazyTlsHandler {
         }
 
         let stream = acceptor.into_stream(Arc::new(config)).await?;
+        let (_, conn) = stream.get_ref();
+        ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
 
-        self.handler.handle(Box::pin(stream)).await?;
+        self.handler.handle(Box::pin(stream), ctx).await?;
         Ok(())
     }
 }

@@ -4,9 +4,14 @@ use std::error::Error;
 
 use crate::io::SendableAsyncStream;
 
+#[derive(Default)]
+pub struct Context {
+    pub alpn: Option<String>
+}
+
 #[async_trait]
 pub trait Handler {
-    async fn handle(&self, mut stream: SendableAsyncStream) -> Result<(), Box<dyn Error>>;
+    async fn handle(&self, mut stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>>;
 
     fn alpn_protocols(&self) -> Option<Vec<String>> {
         None

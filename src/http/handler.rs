@@ -14,7 +14,7 @@ use hyper_util::rt::{TokioIo, TokioExecutor};
 
 use http_body_util::combinators::BoxBody;
 
-use crate::handler::Handler;
+use crate::handler::{Handler, Context};
 use crate::io::SendableAsyncStream;
 
 use super::HttpService;
@@ -34,6 +34,11 @@ impl Service<Request<Incoming>> for HyperService {
     }
 }
 
+pub struct HttpHandler {
+    http1: Http1Handler,
+    http2: Http2Handler
+}
+
 pub struct Http1Handler {
     builder: http1::Builder,
     service: Arc<dyn HttpService + Send + Sync>,
@@ -42,6 +47,30 @@ pub struct Http1Handler {
 pub struct Http2Handler {
     builder: http2::Builder<TokioExecutor>,
     service: Arc<dyn HttpService + Send + Sync>,
+}
+
+impl HttpHandler {
+    pub fn new(service: Arc<dyn HttpService + Send + Sync>) -> Self {
+        Self {
+            http1: Http1Handler::new(service.clone()),
+            http2: Http2Handler::new(service)
+        }
+    }
+}
+
+#[async_trait]
+impl Handler for HttpHandler {
+    async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
+        match ctx.alpn.as_deref() {
+            Some("http/1.1") => self.http1.handle(stream, ctx).await,
+            Some("h2") => self.http2.handle(stream, ctx).await,
+            _ => return Err("Unknown protocol".into())
+        }
+    }
+
+    fn alpn_protocols(&self) -> Option<Vec<String>> {
+        Some(vec!["h2".to_string(), "http/1.1".to_string()])
+    }
 }
 
 impl Http1Handler {
