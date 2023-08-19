@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use std::{error::Error, pin::Pin};
+use std::error::Error;
 
 use crate::io::SendableAsyncStream;
 
@@ -9,4 +9,4 @@ pub trait Handler {
     async fn handle(&self, mut stream: SendableAsyncStream) -> Result<(), Box<dyn Error>>;
 }
 
-pub type SendableHandler = Pin<Box<dyn Handler + Send + Sync>>;
+pub type SendableHandler = Box<dyn Handler + Send + Sync>;

@@ -22,7 +22,7 @@ pub struct TlsHandler {
 }
 
 impl TlsHandler {
-    pub fn new(settings: settings::TLS, handler: SendableHandler) -> Result<Self, rustls::Error> {
+    pub fn new(settings: &settings::Tls, handler: SendableHandler) -> Result<Self, rustls::Error> {
         let certificates = load_certs(Path::new(&settings.certificate)).unwrap();
         let mut keys = load_keys(Path::new(&settings.key)).unwrap();
 
