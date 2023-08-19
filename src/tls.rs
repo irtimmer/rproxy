@@ -33,10 +33,14 @@ impl TlsHandler {
         let certificates = load_certs(Path::new(&settings.certificate)).unwrap();
         let mut keys = load_keys(Path::new(&settings.key)).unwrap();
 
-        let config = ServerConfig::builder()
+        let mut config = ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
             .with_single_cert(certificates, keys.remove(0))?;
+
+        if let Some(protocols) = handler.alpn_protocols() {
+            config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
+        }
 
         Ok(Self {
             acceptor: TlsAcceptor::from(Arc::new(config)),
@@ -70,13 +74,16 @@ impl Handler for LazyTlsHandler {
     async fn handle(&self, stream: SendableAsyncStream) -> Result<(), Box<dyn Error>> {
         let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
 
-        let config = Arc::new(ServerConfig::builder()
+        let mut config = ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(self.certificates.clone(), self.key.clone())?);
+            .with_single_cert(self.certificates.clone(), self.key.clone())?;
 
+        if let Some(protocols) = self.handler.alpn_protocols() {
+            config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
+        }
 
-        let stream = acceptor.into_stream(config).await?;
+        let stream = acceptor.into_stream(Arc::new(config)).await?;
 
         self.handler.handle(Box::pin(stream)).await?;
         Ok(())

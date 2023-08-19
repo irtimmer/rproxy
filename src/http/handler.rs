@@ -59,4 +59,8 @@ impl Handler for HttpHandler {
             .await?;
         Ok(())
     }
+
+    fn alpn_protocols(&self) -> Option<Vec<String>> {
+        Some(vec!["http/1.1".to_string()])
+    }
 }
