@@ -17,6 +17,13 @@ use crate::handler::{SendableHandler, Handler, Context};
 use crate::io::SendableAsyncStream;
 use crate::settings;
 
+pub struct SniHandler {
+    hostname: String,
+    handler: SendableHandler,
+    certificates: Vec<Certificate>,
+    key: PrivateKey
+}
+
 pub struct TlsHandler {
     acceptor: TlsAcceptor,
     handler: SendableHandler
@@ -25,7 +32,24 @@ pub struct TlsHandler {
 pub struct LazyTlsHandler {
     handler: SendableHandler,
     certificates: Vec<Certificate>,
+    sni: Vec<SniHandler>,
     key: PrivateKey
+}
+
+impl SniHandler {
+    pub fn new(
+        hostname: &str,
+        handler: SendableHandler,
+        certificate: &str,
+        key: &str,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            hostname: hostname.to_owned(),
+            handler,
+            certificates: load_certs(Path::new(certificate))?,
+            key: load_keys(Path::new(key))?.remove(0),
+        })
+    }
 }
 
 impl TlsHandler {
@@ -50,9 +74,14 @@ impl TlsHandler {
 }
 
 impl LazyTlsHandler {
-    pub fn new(settings: &settings::Tls, handler: SendableHandler) -> io::Result<Self> {
+    pub fn new(
+        settings: &settings::Tls,
+        handler: SendableHandler,
+        sni: Vec<SniHandler>,
+    ) -> io::Result<Self> {
         Ok(Self {
             handler,
+            sni,
             certificates: load_certs(Path::new(&settings.certificate))?,
             key: load_keys(Path::new(&settings.key))?.remove(0)
         })
@@ -76,12 +105,22 @@ impl Handler for LazyTlsHandler {
     async fn handle(&self, stream: SendableAsyncStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
         let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
 
+        let (certificates, key, handler) = if let Some(sni) = self
+            .sni
+            .iter()
+            .find(|s| acceptor.client_hello().server_name() == Some(s.hostname.as_str()))
+        {
+            (&sni.certificates, &sni.key, &sni.handler)
+        } else {
+            (&self.certificates, &self.key, &self.handler)
+        };
+
         let mut config = ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(self.certificates.clone(), self.key.clone())?;
+            .with_single_cert(certificates.clone(), key.clone())?;
 
-        if let Some(protocols) = self.handler.alpn_protocols() {
+        if let Some(protocols) = handler.alpn_protocols() {
             config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
         }
 
@@ -89,7 +128,7 @@ impl Handler for LazyTlsHandler {
         let (_, conn) = stream.get_ref();
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
 
-        self.handler.handle(Box::pin(stream), ctx).await?;
+        handler.handle(Box::pin(stream), ctx).await?;
         Ok(())
     }
 }

@@ -2,15 +2,16 @@ use async_recursion::async_recursion;
 
 use config::{Config, ConfigError, File};
 
+use futures::future::try_join_all;
 use serde_derive::Deserialize;
 
-use std::error::Error;
 use std::sync::Arc;
 
+use crate::error::Error;
 use crate::handler::{self};
 use crate::listener::{self, TcpListener};
 use crate::http::{self, HttpHandler, Http1Handler, Http2Handler, HelloService, ProxyService};
-use crate::tls::{TlsHandler, LazyTlsHandler};
+use crate::tls::{self, TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
 #[derive(Debug, Deserialize)]
@@ -35,10 +36,20 @@ pub struct SocketListener {
 
 #[derive(Debug, Deserialize)]
 #[allow(unused)]
-pub struct Tls {
+pub struct SniHandler {
+    pub hostname: String,
     pub certificate: String,
     pub key: String,
     pub handler: Box<Handler>
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Tls {
+    pub certificate: String,
+    pub key: String,
+    pub handler: Box<Handler>,
+    pub sni: Vec<SniHandler>
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,18 +100,20 @@ impl Settings {
     }
 }
 
-pub async fn build_listener(listener: &Listener) -> Result<Box<dyn listener::Listener>, Box<dyn Error>> {
+pub async fn build_listener(listener: &Listener) -> Result<Box<dyn listener::Listener>, Error> {
     Ok(match listener {
         Listener::Socket(s) => Box::new(TcpListener::new(&s.listen, build_handler(&s.handler).await?).await?)
     })
 }
 
 #[async_recursion]
-pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler + Send + Sync + Unpin>, Box<dyn Error>> {
+pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler + Send + Sync + Unpin>, Error> {
     let handler: Box<dyn handler::Handler + Send + Sync + Unpin> = match handler {
         Handler::Tunnel(s) => Box::new(TunnelHandler::new(s.target.clone())),
         Handler::Tls(s) => Box::new(TlsHandler::new(s, build_handler(&s.handler).await?)?),
-        Handler::LazyTls(s) => Box::new(LazyTlsHandler::new(s, build_handler(&s.handler).await?)?),
+        Handler::LazyTls(s) => Box::new(LazyTlsHandler::new(s, build_handler(&s.handler).await?, try_join_all(s.sni.iter().map(|x| async {
+            Ok::<tls::SniHandler, Error>(tls::SniHandler::new(&x.hostname, build_handler(&x.handler).await?, &x.certificate, &x.key)?)
+        })).await?)?),
         Handler::Http(s) => Box::new(HttpHandler::new(build_service(&s.service).await?)),
         Handler::Http1(s) => Box::new(Http1Handler::new(build_service(&s.service).await?)),
         Handler::Http2(s) => Box::new(Http2Handler::new(build_service(&s.service).await?))
@@ -108,7 +121,8 @@ pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler
     Ok(handler)
 }
 
-pub async fn build_service(service: &Service) -> Result<Arc<dyn http::HttpService + Send + Sync>, Box<dyn Error>> {
+#[async_recursion]
+pub async fn build_service(service: &Service) -> Result<Arc<dyn http::HttpService + Send + Sync>, Error> {
     let service: Arc<dyn http::HttpService + Send + Sync> = match service {
         Service::Hello => Arc::new(HelloService {}),
         Service::Proxy(s) => Arc::new(ProxyService::new((&s.uri).try_into()?))
