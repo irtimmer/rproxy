@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::error::Error;
 use crate::handler::{self};
 use crate::listener::{self, TcpListener};
-use crate::http::{self, HttpHandler, Http1Handler, Http2Handler, HelloService, ProxyService};
+use crate::http::{self, HttpHandler, Http1Handler, Http2Handler, HelloService, ProxyService, FileService};
 use crate::tls::{self, TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
@@ -81,13 +81,20 @@ pub struct Http {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Service {
     Hello,
-    Proxy(Proxy)
+    Proxy(Proxy),
+    File(Files)
 }
 
 #[derive(Debug, Deserialize)]
 #[allow(unused)]
 pub struct Proxy {
     pub uri: String
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Files {
+    pub path: String
 }
 
 impl Settings {
@@ -125,7 +132,8 @@ pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler
 pub async fn build_service(service: &Service) -> Result<Arc<dyn http::HttpService + Send + Sync>, Error> {
     let service: Arc<dyn http::HttpService + Send + Sync> = match service {
         Service::Hello => Arc::new(HelloService {}),
-        Service::Proxy(s) => Arc::new(ProxyService::new((&s.uri).try_into()?))
+        Service::Proxy(s) => Arc::new(ProxyService::new((&s.uri).try_into()?)),
+        Service::File(s) => Arc::new(FileService::new(&s.path))
     };
     Ok(service)
 }
