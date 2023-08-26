@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::{http1, http2};
 use hyper::service::Service;
-use hyper::{Request, Response};
+use hyper::{Request, Response, Uri};
 
 use hyper_util::rt::{TokioIo, TokioExecutor};
 
@@ -28,10 +28,46 @@ impl Service<Request<Incoming>> for HyperService {
     type Error = Box<dyn Error + Send + Sync>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn call(&self, req: Request<Incoming>) -> Self::Future {
+    fn call(&self, mut req: Request<Incoming>) -> Self::Future {
         let service = self.service.clone();
-        Box::pin(async move { service.call(req).await })
+        Box::pin(async move {
+            normalize_uri(&mut req)?;
+            service.call(req).await
+        })
     }
+}
+
+fn normalize_uri(req: &mut Request<Incoming>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut stack = vec![""];
+    let mut trailing_slash = false;
+    req.uri().path().split('/').for_each(|e| match e {
+        "" | "." => trailing_slash = true,
+        ".." => {
+            trailing_slash = true;
+            if stack.len() > 1 {
+                stack.pop();
+            }
+        },
+        _ => {
+            trailing_slash = false;
+            stack.push(e)
+        }
+    });
+    if trailing_slash {
+        stack.push("");
+    }
+    let path = stack.join("/");
+    if path.len() != req.uri().path().len() {
+        let mut parts = req.uri().clone().into_parts();
+        let path_and_query = match req.uri().query() {
+            Some(q) => [&path, q].join("?"),
+            None => path
+        };
+        parts.path_and_query = Some(path_and_query.try_into()?);
+        *req.uri_mut() = Uri::from_parts(parts)?;
+    };
+
+    Ok(())
 }
 
 pub struct HttpHandler {
