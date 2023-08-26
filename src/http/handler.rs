@@ -8,10 +8,11 @@ use async_trait::async_trait;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::{http1, http2};
 use hyper::service::Service;
-use hyper::{Request, Response, Uri};
+use hyper::{Request, Response, StatusCode, Uri};
 
 use hyper_util::rt::{TokioIo, TokioExecutor};
 
+use http_body_util::{BodyExt, Empty};
 use http_body_util::combinators::BoxBody;
 
 use crate::handler::{Handler, Context};
@@ -32,7 +33,17 @@ impl Service<Request<Incoming>> for HyperService {
         let service = self.service.clone();
         Box::pin(async move {
             normalize_uri(&mut req)?;
-            service.call(req).await
+            match service.call(req).await {
+                Err(e) => {
+                    eprintln!("Internal server error: {}", e);
+                    let mut res: Self::Response = Response::new(BoxBody::new(
+                        Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }),
+                    ));
+                    *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    Ok(res)
+                }
+                res => res,
+            }
         })
     }
 }
