@@ -12,7 +12,7 @@ use hyper::body::{Bytes, Incoming};
 use hyper::client::conn::http1::Builder;
 use hyper::{Request, Response, Uri, header};
 
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UnixStream};
 
 use tokio_rustls::rustls::{ClientConfig, OwnedTrustAnchor, RootCertStore, ServerName};
 use tokio_rustls::TlsConnector;
@@ -71,6 +71,7 @@ impl HttpService for ProxyService {
 
         let socket: Box<dyn AsyncStream + Send + Unpin> =
             match self.uri.scheme().ok_or("No scheme specified")?.as_str() {
+                "unix" => Box::new(UnixStream::connect(self.uri.path()).await?),
                 "http" => Box::new(TcpStream::connect(addr).await?),
                 "https" => {
                     let socket = TcpStream::connect(addr).await?;
