@@ -137,6 +137,7 @@ impl Handler for Http1Handler {
         };
         self.builder
             .serve_connection(TokioIo::new(stream), service)
+            .with_upgrades()
             .await?;
 
         Ok(())
