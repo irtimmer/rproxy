@@ -15,27 +15,23 @@ use crate::tls::{self, TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Settings {
     pub listeners: Vec<Listener>
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Listener {
     Socket(SocketListener)
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct SocketListener {
     pub listen: String,
     pub handler: Handler
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct SniHandler {
     pub hostname: String,
     pub certificate: String,
@@ -44,7 +40,6 @@ pub struct SniHandler {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Tls {
     pub certificate: String,
     pub key: String,
@@ -53,7 +48,6 @@ pub struct Tls {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Handler {
     Http(Http),
@@ -65,19 +59,16 @@ pub enum Handler {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Tunnel {
     pub target: String
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Http {
     pub service: Service
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Service {
     Hello,
@@ -87,13 +78,11 @@ pub enum Service {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Proxy {
     pub uri: String
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Files {
     pub path: String
 }
