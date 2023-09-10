@@ -1,53 +1,32 @@
-use std::{error::Error, sync::Arc, mem};
+use std::{error::Error, mem};
 
 use async_trait::async_trait;
 
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty};
 
+use hyper::http::uri::Authority;
 use hyper::http::HeaderValue;
 use hyper_util::rt::TokioIo;
 
 use hyper::body::{Bytes, Incoming};
-use hyper::client::conn::http1::Builder;
-use hyper::{header, Request, Response, StatusCode, Uri};
+use hyper::{header, Request, Response, StatusCode, Uri, Version};
 
 use tokio::io::copy_bidirectional;
-use tokio::net::{TcpStream, UnixStream};
 
-use tokio_rustls::rustls::{ClientConfig, OwnedTrustAnchor, RootCertStore, ServerName};
-use tokio_rustls::TlsConnector;
-
-use crate::io::AsyncStream;
-
+use super::client::{Client, Connection};
 use super::HttpService;
 
 pub struct ProxyService {
-    connector: TlsConnector,
+    client: Client,
     uri: Uri
 }
 
 impl ProxyService {
     pub fn new(uri: Uri) -> Self {
-        let mut root_store = RootCertStore::empty();
-        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-            OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
-
-        let config = Arc::new(
-            ClientConfig::builder()
-                .with_safe_defaults()
-                .with_root_certificates(root_store)
-                .with_no_client_auth(),
-        );
-
         ProxyService {
-            connector: TlsConnector::from(config),
-            uri
+            client: Client::new(),
+            uri,
         }
     }
 }
@@ -64,50 +43,52 @@ impl HttpService for ProxyService {
         let mut parts = req_parts.uri.clone().into_parts();
         parts.scheme = None;
         parts.authority = None;
-        let uri: Uri = Uri::from_parts(parts)?;
 
-        let host = self.uri.host().ok_or("No host specified")?.to_owned();
-        let port = self.uri.port_u16().unwrap_or(80);
-        let addr = format!("{}:{}", host, port);
+        let mut sender = self.client.get_connection(&self.uri).await?;
 
-        let socket: Box<dyn AsyncStream + Send + Unpin> =
-            match self.uri.scheme().ok_or("No scheme specified")?.as_str() {
-                "unix" => Box::new(UnixStream::connect(self.uri.path()).await?),
-                "http" => Box::new(TcpStream::connect(addr).await?),
-                "https" => {
-                    let socket = TcpStream::connect(addr).await?;
-                    let server_name = ServerName::try_from(host.as_str())
-                        .or_else(|_| socket.peer_addr().map(|s| ServerName::IpAddress(s.ip())))?;
-                    Box::new(self.connector.connect(server_name, socket).await?)
-                }
-                _ => return Err("Invalid scheme".into()),
-            };
-        let stream = TokioIo::new(socket);
-
-        let (mut sender, conn) = Builder::new()
-            .preserve_header_case(true)
-            .title_case_headers(true)
-            .handshake(stream)
-            .await?;
-
-        tokio::task::spawn(async move {
-            if let Err(err) = conn.await {
-                println!("Connection failed: {:?}", err);
-            }
-        });
-
-        let mut proxy_body = BoxBody::new(body.map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }));
-        let mut req_body: BoxBody<Bytes, Box<dyn Error + Send + Sync>> = BoxBody::new(Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }));
+        let mut proxy_body =
+            BoxBody::new(body.map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }));
+        let mut req_body: BoxBody<Bytes, Box<dyn Error + Send + Sync>> =
+            BoxBody::new(Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }));
         if let Some(connection) = req_parts.headers.get(header::CONNECTION) {
             if connection == "upgrade" {
                 mem::swap(&mut proxy_body, &mut req_body);
             }
         }
 
-        let mut request = Request::builder().uri(uri).body(proxy_body)?;
+        let request = match sender.conn {
+            Connection::Http1(_) => Request::builder().uri(Uri::from_parts(parts)?),
+            Connection::Http2(_) => {
+                parts.authority = self.uri.authority().cloned();
+                parts.scheme = self.uri.scheme().cloned();
+                Request::builder()
+                    .uri(Uri::from_parts(parts)?)
+                    .version(Version::HTTP_2)
+            }
+            _ => unreachable!(),
+        };
+
+        let mut request = request.method(req_parts.method.clone()).body(proxy_body)?;
         let headers = request.headers_mut();
         headers.clone_from(&req_parts.headers);
-        headers.entry(header::HOST).or_insert(HeaderValue::from_str(&host)?);
+        match sender.conn {
+            Connection::Http1(_) => {
+                let host = match req_parts.version {
+                    Version::HTTP_2 => req_parts.uri.authority().map(Authority::host),
+                    _ => req_parts
+                        .headers
+                        .get(header::HOST)
+                        .and_then(|e| e.to_str().ok()),
+                };
+
+                if let Some(host) = host {
+                    headers
+                        .entry(header::HOST)
+                        .or_insert(HeaderValue::from_str(host)?);
+                }
+            }
+            _ => (),
+        };
 
         let response = sender.send_request(request).await?;
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
