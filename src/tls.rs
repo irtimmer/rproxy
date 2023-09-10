@@ -94,6 +94,7 @@ impl Handler for TlsHandler {
         let stream = self.acceptor.accept(stream).await?;
         let (_, conn) = stream.get_ref();
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
+        ctx.server_name = conn.sni_hostname().map(str::to_string);
 
         self.handler.handle(Box::pin(stream), ctx).await?;
         Ok(())
@@ -127,6 +128,7 @@ impl Handler for LazyTlsHandler {
         let stream = acceptor.into_stream(Arc::new(config)).await?;
         let (_, conn) = stream.get_ref();
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
+        ctx.server_name = conn.sni_hostname().map(str::to_string);
 
         handler.handle(Box::pin(stream), ctx).await?;
         Ok(())

@@ -6,7 +6,8 @@ use crate::io::SendableAsyncStream;
 
 #[derive(Default)]
 pub struct Context {
-    pub alpn: Option<String>
+    pub alpn: Option<String>,
+    pub server_name: Option<String>
 }
 
 #[async_trait]

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::{http1, http2};
 use hyper::service::Service;
-use hyper::{Request, Response, StatusCode, Uri};
+use hyper::{Request, Response, StatusCode, Uri, Version};
 
 use hyper_util::rt::{TokioIo, TokioExecutor};
 
@@ -22,6 +22,7 @@ use super::HttpService;
 
 struct HyperService {
     service: Arc<dyn HttpService + Send + Sync>,
+    ctx: Context
 }
 
 impl Service<Request<Incoming>> for HyperService {
@@ -31,7 +32,18 @@ impl Service<Request<Incoming>> for HyperService {
 
     fn call(&self, mut req: Request<Incoming>) -> Self::Future {
         let service = self.service.clone();
+        let server_name = self.ctx.server_name.clone();
         Box::pin(async move {
+            if req.version() == Version::HTTP_2 {
+                if req.uri().authority().map(|e| e.to_string()) != server_name {
+                    let mut res: Self::Response = Response::new(BoxBody::new(
+                        Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }),
+                    ));
+                    *res.status_mut() = StatusCode::MISDIRECTED_REQUEST;
+                    return Ok(res)
+                }
+            }
+
             normalize_uri(&mut req)?;
             match service.call(req).await {
                 Err(e) => {
@@ -131,9 +143,10 @@ impl Http1Handler {
 
 #[async_trait]
 impl Handler for Http1Handler {
-    async fn handle(&self, stream: SendableAsyncStream, _: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         let service = HyperService {
             service: self.service.clone(),
+            ctx
         };
         self.builder
             .serve_connection(TokioIo::new(stream), service)
@@ -158,9 +171,10 @@ impl Http2Handler {
 
 #[async_trait]
 impl Handler for Http2Handler {
-    async fn handle(&self, stream: SendableAsyncStream, _: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         let service = HyperService {
             service: self.service.clone(),
+            ctx
         };
         self.builder
             .serve_connection(TokioIo::new(stream), service)
