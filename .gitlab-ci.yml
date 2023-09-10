@@ -1,0 +1,7 @@
+default:
+  image: "rust:latest"
+
+test:cargo:
+  script:
+    - rustc --version && cargo --version
+    - cargo test --workspace --verbose
