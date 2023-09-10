@@ -101,7 +101,7 @@ pub struct Route {
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         let s = Config::builder()
-            .add_source(File::with_name("config.toml"))
+            .add_source(File::with_name("config.yaml"))
             .build()?;
 
         s.try_deserialize()
