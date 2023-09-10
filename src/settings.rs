@@ -2,7 +2,7 @@ use async_recursion::async_recursion;
 
 use config::{Config, ConfigError, File};
 
-use futures::future::try_join_all;
+use futures::future::{join_all, try_join_all};
 use serde_derive::Deserialize;
 
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::error::Error;
 use crate::handler::{self};
 use crate::listener::{self, TcpListener};
-use crate::http::{self, HttpHandler, Http1Handler, Http2Handler, HelloService, ProxyService, FileService};
+use crate::http::{self, HttpHandler, Http1Handler, Http2Handler, HelloService, ProxyService, FileService, RouterService};
 use crate::tls::{self, TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
@@ -82,7 +82,8 @@ pub struct Http {
 pub enum Service {
     Hello,
     Proxy(Proxy),
-    File(Files)
+    File(Files),
+    Router(Router)
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +96,17 @@ pub struct Proxy {
 #[allow(unused)]
 pub struct Files {
     pub path: String
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Router {
+    pub routes: Vec<Route>
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Route {
+    pub path: String,
+    pub service: Service
 }
 
 impl Settings {
@@ -133,7 +145,13 @@ pub async fn build_service(service: &Service) -> Result<Arc<dyn http::HttpServic
     let service: Arc<dyn http::HttpService + Send + Sync> = match service {
         Service::Hello => Arc::new(HelloService {}),
         Service::Proxy(s) => Arc::new(ProxyService::new((&s.uri).try_into()?)),
-        Service::File(s) => Arc::new(FileService::new(&s.path))
+        Service::File(s) => Arc::new(FileService::new(&s.path)),
+        Service::Router(s) => Arc::new(RouterService::new(join_all(s.routes.iter().map(|x| async {
+            http::Route {
+                route: x.path.clone(),
+                service: build_service(&x.service).await.unwrap()
+            }
+        })).await))
     };
     Ok(service)
 }
