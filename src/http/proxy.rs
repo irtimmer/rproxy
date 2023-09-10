@@ -74,7 +74,22 @@ impl HttpService for ProxyService {
         match sender.conn {
             Connection::Http1(_) => {
                 let host = match req_parts.version {
-                    Version::HTTP_2 => req_parts.uri.authority().map(Authority::host),
+                    Version::HTTP_2 => {
+                        if headers.contains_key(header::COOKIE) {
+                            // Concat cookies for requests from Http/2 to Http/1.1
+                            headers.insert(
+                                header::COOKIE,
+                                HeaderValue::from_str(
+                                    &headers
+                                        .get_all(header::COOKIE)
+                                        .into_iter()
+                                        .filter_map(|h| h.to_str().ok())
+                                        .join("; "),
+                                )?,
+                            );
+                        }
+                        req_parts.uri.authority().map(Authority::host)
+                    }
                     _ => req_parts
                         .headers
                         .get(header::HOST)
