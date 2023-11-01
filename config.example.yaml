@@ -1,0 +1,54 @@
+servers:
+  # TCP socket listener
+  - type: socket
+    listen: '0.0.0.0:80'
+    # HTTP/1 protocol handler
+    handler:
+      type: http1
+      # Router service
+      service:
+        type: router
+        routes:
+          - path: /api/
+            # Proxy service to upstream http server
+            service:
+              type: proxy
+              uri: http://localhost:3000/api/
+          - path: /
+            # File service for static files
+            service:
+              type: file
+              path: ./static
+  # TCP socket listener
+  - type: socket
+    listen: '0.0.0.0:443'
+    # TLS protocol handler
+    handler:
+      type: lazytls
+      # Default certificate and HTTP protocol handler
+      certificate: /etc/letsencrypt/live/fallback.com/fullchain.pem
+      key: /etc/letsencrypt/live/fallback.com/fullchain.pem
+      handler:
+        type: http
+        # File service
+        service:
+          type: file
+          path: ./static
+      sni:
+        - hostname: example.com
+          certificate: /etc/letsencrypt/live/example.com/fullchain.pem
+          key: /etc/letsencrypt/live/example.com/privkey.pem
+          # Tunnel (unencrypted)
+          handler:
+            type: tunnel
+            target: '192.168.1.2:8080'
+        - hostname: example2.com
+          certificate: /etc/letsencrypt/live/example2.com/fullchain.pem
+          key: /etc/letsencrypt/live/example2.com/privkey.pem
+          # Http handler
+          handler:
+            type: http
+            # Proxy to http service running on unix socket
+            service:
+              type: proxy
+              uri: 'unix://_/run/cockpit/wsinstance/http.sock'
