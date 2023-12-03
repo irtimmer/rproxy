@@ -9,6 +9,8 @@ use hyper::http::uri::Authority;
 use hyper::http::HeaderValue;
 use hyper_util::rt::TokioIo;
 
+use itertools::Itertools;
+
 use hyper::body::{Bytes, Incoming};
 use hyper::{header, Request, Response, StatusCode, Uri, Version};
 
