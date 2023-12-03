@@ -16,7 +16,7 @@ use crate::tunnel::TunnelHandler;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
-    pub listeners: Vec<Listener>
+    pub servers: Vec<Listener>
 }
 
 #[derive(Debug, Deserialize)]

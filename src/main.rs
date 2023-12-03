@@ -16,7 +16,7 @@ use error::Error;
 async fn main() -> Result<(), Error> {
     let settings = Settings::new()?;
 
-    let listeners = try_join_all(settings.listeners.iter().map(build_listener)).await?;
+    let listeners = try_join_all(settings.servers.iter().map(build_listener)).await?;
     join_all(listeners.iter().map(|l| l.handle())).await;
 
     Ok(())
