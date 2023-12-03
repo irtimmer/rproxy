@@ -1,3 +1,4 @@
+mod authenticator;
 mod client;
 mod handler;
 mod proxy;
@@ -6,6 +7,7 @@ mod hello;
 mod file;
 mod router;
 
+pub use authenticator::*;
 pub use client::*;
 pub use handler::*;
 pub use proxy::*;
