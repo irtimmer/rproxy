@@ -3,6 +3,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use async_session::MemoryStore;
+
 use async_trait::async_trait;
 
 use hyper::body::{Bytes, Incoming};
@@ -22,7 +24,13 @@ use super::HttpService;
 
 struct HyperService {
     service: Arc<dyn HttpService + Send + Sync>,
-    ctx: Context
+    ctx: Context,
+    http_ctx: HttpContext
+}
+
+#[derive(Clone)]
+pub struct HttpContext {
+    pub sessions: MemoryStore
 }
 
 impl Service<Request<Incoming>> for HyperService {
@@ -33,6 +41,9 @@ impl Service<Request<Incoming>> for HyperService {
     fn call(&self, mut req: Request<Incoming>) -> Self::Future {
         let service = self.service.clone();
         let server_name = self.ctx.server_name.clone();
+
+        req.extensions_mut().insert(self.http_ctx.clone());
+
         Box::pin(async move {
             if req.version() == Version::HTTP_2 {
                 if req.uri().authority().map(|e| e.to_string()) != server_name {
@@ -101,11 +112,13 @@ pub struct HttpHandler {
 pub struct Http1Handler {
     builder: http1::Builder,
     service: Arc<dyn HttpService + Send + Sync>,
+    context: HttpContext
 }
 
 pub struct Http2Handler {
     builder: http2::Builder<TokioExecutor>,
     service: Arc<dyn HttpService + Send + Sync>,
+    context: HttpContext
 }
 
 impl HttpHandler {
@@ -137,7 +150,13 @@ impl Http1Handler {
         let mut builder = http1::Builder::new();
         builder.preserve_header_case(true).title_case_headers(true);
 
-        Self { builder, service }
+        Self {
+            builder,
+            service,
+            context: HttpContext {
+                sessions: MemoryStore::new()
+            }
+        }
     }
 }
 
@@ -146,6 +165,7 @@ impl Handler for Http1Handler {
     async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         let service = HyperService {
             service: self.service.clone(),
+            http_ctx: self.context.clone(),
             ctx
         };
         self.builder
@@ -165,7 +185,13 @@ impl Http2Handler {
     pub fn new(service: Arc<dyn HttpService + Send + Sync>) -> Self {
         let builder = http2::Builder::new(TokioExecutor::new());
 
-        Self { builder, service }
+        Self {
+            builder,
+            service,
+            context: HttpContext {
+                sessions: MemoryStore::new()
+            }
+        }
     }
 }
 
@@ -174,6 +200,7 @@ impl Handler for Http2Handler {
     async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         let service = HyperService {
             service: self.service.clone(),
+            http_ctx: self.context.clone(),
             ctx
         };
         self.builder
