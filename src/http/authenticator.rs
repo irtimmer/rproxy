@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use async_once_cell::OnceCell;
 use async_session::{SessionStore, Session};
 use async_trait::async_trait;
 
@@ -33,9 +34,12 @@ use crate::http::HttpService;
 use super::{Client, HttpContext};
 
 pub struct AuthenticatorService {
+    discovery_url: IssuerUrl,
+    client_id: ClientId,
+    client_secret: ClientSecret,
     pub service: Arc<dyn HttpService + Send + Sync>,
     pub http_client: Client,
-    pub client: CoreClient,
+    pub client: OnceCell<CoreClient>,
     pub session_cookie: String
 }
 
@@ -95,21 +99,13 @@ impl AuthenticatorService {
     pub async fn new(service: Arc<dyn HttpService + Send + Sync>, discovery_url: &str, client_id: &str, client_secret: &str) -> Result<Self, Error> {
         let http_client = Client::new();
 
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            IssuerUrl::new(discovery_url.to_string())?,
-            get_client(&http_client)
-        ).await?;
-
-        let client = CoreClient::from_provider_metadata(
-            provider_metadata,
-            ClientId::new(client_id.to_string()),
-            Some(ClientSecret::new(client_secret.to_string()))
-        );
-
         Ok(Self {
+            discovery_url: IssuerUrl::new(discovery_url.to_string())?,
+            client_id: ClientId::new(client_id.to_string()),
+            client_secret: ClientSecret::new(client_secret.to_string()),
             service,
             http_client,
-            client,
+            client: OnceCell::new(),
             session_cookie: "session".to_string()
         })
     }
@@ -136,6 +132,16 @@ impl HttpService for AuthenticatorService {
             return self.service.call(req).await;
         }
 
+        //Lazy initialize the client, so we don't fail if the upstream server is down
+        let client = self.client.get_or_try_init(async {
+            let provider_metadata = CoreProviderMetadata::discover_async(
+                IssuerUrl::new(self.discovery_url.to_string())?,
+                get_client(&self.http_client)
+            ).await?;
+    
+            Ok::<_, Error>(CoreClient::from_provider_metadata(provider_metadata, self.client_id.clone(), Some(self.client_secret.clone())))
+        }).await?;
+
         let session = if let (Some(mut session), Some(query)) = (session, req.uri().query()) {
             // Parse the query string into key-value pairs
             let query_pairs: Vec<(Cow<'_, str>, Cow<'_, str>)> = form_urlencoded::parse(query.as_bytes()).collect();
@@ -151,14 +157,13 @@ impl HttpService for AuthenticatorService {
                 }
 
                 let code = AuthorizationCode::new(code.to_string());
-                let request = self
-                    .client
+                let request = client
                     .exchange_code(code)
                     .set_redirect_uri(Cow::Owned(RedirectUrl::new(login.redirect_url.clone())?));
 
                 let ret = request.request_async(get_client(&self.http_client)).await?;
 
-                let user = ret.id_token().ok_or("No ID token")?.claims(&self.client.id_token_verifier(), &login.nonce)?;
+                let user = ret.id_token().ok_or("No ID token")?.claims(&client.id_token_verifier(), &login.nonce)?;
 
                 let body = BoxBody::new(Empty::new().map_err(|e| -> Error { Box::new(e) }));
                 let resp = Response::builder()
@@ -187,7 +192,7 @@ impl HttpService for AuthenticatorService {
         });
 
         let uri = Uri::from_parts(uri_parts)?;
-        let client = self.client.clone().set_redirect_uri(RedirectUrl::new(uri.to_string())?);
+        let client = client.clone().set_redirect_uri(RedirectUrl::new(uri.to_string())?);
 
         let (redirect, state, nonce) = client
             .authorize_url(

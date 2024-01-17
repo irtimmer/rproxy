@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-once-cell = "0.5.3"
 cookie = "0.17.0"
 hyper = { version = "1.0.0-rc.4", features = ["server", "client", "http1", "http2"] }
 hyper-util = { git = "https://github.com/hyperium/hyper-util.git" }
