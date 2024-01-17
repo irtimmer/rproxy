@@ -173,7 +173,7 @@ impl HttpService for AuthenticatorService {
                     .status(StatusCode::TEMPORARY_REDIRECT);
 
                 session.remove("login");
-                session.insert("user", user.email().ok_or("No email"))?;
+                session.insert("user", user.email().ok_or("No email")?)?;
 
                 return Ok(resp.body(body)?);
             }
@@ -217,7 +217,11 @@ impl HttpService for AuthenticatorService {
         let cookie = http_ctx.sessions.store_session(session).await?;
 
         if let Some(cookie) = cookie {
-            resp = resp.header(header::COOKIE, HeaderValue::from_str(&cookie)?);
+            let mut cookie_header = vec!(format!("{}={}", self.session_cookie, cookie));
+            if ctx.secure {
+                cookie_header.push("Secure".to_string());
+            }
+            resp = resp.header(header::SET_COOKIE, HeaderValue::from_str(&cookie_header.join("; "))?);
         }
 
         Ok(resp.body(body)?)
