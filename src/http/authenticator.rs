@@ -23,7 +23,7 @@ use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetada
 use openidconnect::http::uri::InvalidUri;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, HttpResponse,
-    IssuerUrl, Nonce, RedirectUrl, TokenResponse
+    IssuerUrl, Nonce, RedirectUrl, TokenResponse, Scope
 };
 
 use serde_derive::{Deserialize, Serialize};
@@ -202,6 +202,7 @@ impl HttpService for AuthenticatorService {
                 || CsrfToken::new_random(),
                 || Nonce::new_random(),
             )
+            .add_scope(Scope::new("email".to_string()))
             .url();
 
         let body = BoxBody::new(Empty::new().map_err(|e| -> Error { Box::new(e) }));
