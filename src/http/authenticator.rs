@@ -29,6 +29,7 @@ use openidconnect::{
 use serde_derive::{Deserialize, Serialize};
 
 use crate::error::Error;
+use crate::handler::Context;
 use crate::http::HttpService;
 
 use super::{Client, HttpContext};
@@ -115,6 +116,7 @@ impl AuthenticatorService {
 impl HttpService for AuthenticatorService {
     async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
         let http_ctx = req.extensions().get::<HttpContext>().ok_or("No HttpContext")?;
+        let ctx = req.extensions().get::<Context>().ok_or("No Context")?;
 
         let session_cookie = req.headers().get(header::COOKIE).and_then(|cookies|
             Cookie::split_parse(cookies.to_str().ok()?)
@@ -184,7 +186,7 @@ impl HttpService for AuthenticatorService {
         //Redirect to the login page
         let mut uri_parts = req.uri().clone().into_parts();
         let authority = req.headers().get(header::HOST);
-        uri_parts.scheme = Some(Scheme::HTTP);
+        uri_parts.scheme = if ctx.secure { Scheme::HTTPS } else { Scheme::HTTP }.into();
         uri_parts.authority = uri_parts.authority.or_else(|| {
             authority
                 .and_then(|x| x.to_str().ok())

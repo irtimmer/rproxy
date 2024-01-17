@@ -4,8 +4,9 @@ use std::error::Error;
 
 use crate::io::SendableAsyncStream;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Context {
+    pub secure: bool,
     pub alpn: Option<String>,
     pub server_name: Option<String>
 }

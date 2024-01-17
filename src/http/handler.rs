@@ -43,6 +43,7 @@ impl Service<Request<Incoming>> for HyperService {
         let server_name = self.ctx.server_name.clone();
 
         req.extensions_mut().insert(self.http_ctx.clone());
+        req.extensions_mut().insert(self.ctx.clone());
 
         Box::pin(async move {
             if req.version() == Version::HTTP_2 {
