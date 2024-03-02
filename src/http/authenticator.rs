@@ -14,13 +14,12 @@ use cookie::Cookie;
 
 use hyper::body::{Bytes, Incoming};
 use hyper::header::HeaderValue;
-use hyper::http::uri::{Authority, Scheme};
+use hyper::http::uri::{Authority, InvalidUri, Scheme};
 use hyper::{header, Request, Response, StatusCode, Uri};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
-use openidconnect::http::uri::InvalidUri;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, HttpResponse,
     IssuerUrl, Nonce, RedirectUrl, TokenResponse, Scope
@@ -61,16 +60,30 @@ impl Display for ClientError {
     }
 }
 
+fn from_method_v02_to_v1(method: openidconnect::http::Method) -> hyper::http::Method {
+    hyper::http::Method::from_str(method.as_str()).unwrap()
+}
+
+fn from_statuscode_v1_to_v02(statuscode: hyper::http::StatusCode) -> openidconnect::http::StatusCode {
+    openidconnect::http::StatusCode::from_u16(statuscode.as_u16()).unwrap()
+}
+
+fn from_headermap_v1_to_v02(headers: &hyper::http::HeaderMap) -> openidconnect::http::HeaderMap {
+    headers.iter().map(|(key, value)| {
+        (openidconnect::http::HeaderName::from_str(key.as_str()).unwrap(), openidconnect::http::HeaderValue::from_bytes(value.as_bytes()).unwrap())
+    }).collect()
+}
+
 fn get_client<'a>(client: &'a Client) -> impl Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Result<HttpResponse, ClientError>> + 'a + Send>> {
     move |req: HttpRequest| Box::pin(async move {
         let uri = Uri::try_from(req.url.as_str()).map_err(|e| ClientError::Uri(e))?;
 
         let mut request = Request::builder()
-            .method(req.method).uri(uri.clone())
+            .method(from_method_v02_to_v1(req.method)).uri(uri.clone())
             .header(header::HOST, uri.host().ok_or(ClientError::Other("No hostname"))?);
 
         for (key, value) in req.headers {
-            request = request.header(key.ok_or(ClientError::Other("Invalid header"))?, value);
+            request = request.header(key.ok_or(ClientError::Other("Invalid header"))?.as_str(), value.as_bytes());
         }
 
         let request = request
@@ -82,8 +95,8 @@ fn get_client<'a>(client: &'a Client) -> impl Fn(HttpRequest) -> Pin<Box<dyn Fut
         let resp = conn.send_request(request).await.map_err(|_| ClientError::Other("Can't send request"))?;
 
         Ok(HttpResponse {
-            status_code: resp.status(),
-            headers: resp.headers().to_owned(),
+            status_code: from_statuscode_v1_to_v02(resp.status()),
+            headers: from_headermap_v1_to_v02(resp.headers()),
             body: resp.collect().await.map_err(|_| ClientError::Other("Can't receive body"))?.to_bytes().to_vec(),
         })
     })
