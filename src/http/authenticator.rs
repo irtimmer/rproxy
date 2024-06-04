@@ -21,8 +21,7 @@ use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, HttpResponse,
-    IssuerUrl, Nonce, RedirectUrl, TokenResponse, Scope
+    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, HttpRequest, HttpResponse, IssuerUrl, Nonce, RedirectUrl, Scope, TokenResponse
 };
 
 use serde_derive::{Deserialize, Serialize};
@@ -33,13 +32,22 @@ use crate::http::HttpService;
 
 use super::{Client, HttpContext};
 
+type OIDCClient = CoreClient<
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
+
 pub struct AuthenticatorService {
     discovery_url: IssuerUrl,
     client_id: ClientId,
     client_secret: ClientSecret,
     pub service: Arc<dyn HttpService + Send + Sync>,
     pub http_client: Client,
-    pub client: OnceCell<CoreClient>,
+    pub client: OnceCell<OIDCClient>,
     pub session_cookie: String
 }
 
@@ -47,7 +55,7 @@ pub struct AuthenticatorService {
 pub struct Token {}
 
 #[derive(Debug)]
-enum ClientError {
+pub enum ClientError {
     Uri(InvalidUri),
     Other(&'static str)
 }
@@ -60,46 +68,38 @@ impl Display for ClientError {
     }
 }
 
-fn from_method_v02_to_v1(method: openidconnect::http::Method) -> hyper::http::Method {
-    hyper::http::Method::from_str(method.as_str()).unwrap()
-}
+impl<'c> AsyncHttpClient<'c> for Client {
+    type Error = ClientError;
+    type Future = Pin<Box<dyn Future<Output = Result<HttpResponse, Self::Error>> + Send + 'c>>;
 
-fn from_statuscode_v1_to_v02(statuscode: hyper::http::StatusCode) -> openidconnect::http::StatusCode {
-    openidconnect::http::StatusCode::from_u16(statuscode.as_u16()).unwrap()
-}
+    fn call(&'c self, req: HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            let mut request = Request::builder()
+                .header(header::HOST, req.uri().host().ok_or(ClientError::Other("No hostname"))?)
+                .method(req.method()).uri(req.uri());
+                
 
-fn from_headermap_v1_to_v02(headers: &hyper::http::HeaderMap) -> openidconnect::http::HeaderMap {
-    headers.iter().map(|(key, value)| {
-        (openidconnect::http::HeaderName::from_str(key.as_str()).unwrap(), openidconnect::http::HeaderValue::from_bytes(value.as_bytes()).unwrap())
-    }).collect()
-}
+            for (key, value) in req.headers() {
+                request = request.header(key.as_str(), value.as_bytes());
+            }
 
-fn get_client<'a>(client: &'a Client) -> impl Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Result<HttpResponse, ClientError>> + 'a + Send>> {
-    move |req: HttpRequest| Box::pin(async move {
-        let uri = Uri::try_from(req.url.as_str()).map_err(|e| ClientError::Uri(e))?;
+            let request = request
+                .body(BoxBody::new(
+                    Full::new(Bytes::from(req.body().clone())).map_err(|e| -> Error { Box::new(e) }),
+                )).map_err(|_| ClientError::Other("Can't create response"))?;
 
-        let mut request = Request::builder()
-            .method(from_method_v02_to_v1(req.method)).uri(uri.clone())
-            .header(header::HOST, uri.host().ok_or(ClientError::Other("No hostname"))?);
+            let mut conn = self.get_connection(req.uri()).await.map_err(|_| ClientError::Other("No connection"))?;
+            let resp = conn.send_request(request).await.map_err(|_| ClientError::Other("Can't send request"))?;
 
-        for (key, value) in req.headers {
-            request = request.header(key.ok_or(ClientError::Other("Invalid header"))?.as_str(), value.as_bytes());
-        }
+            let mut builder = Response::builder().status(resp.status());
+            for (key, value) in resp.headers() {
+                builder = builder.header(key, value);
+            }
 
-        let request = request
-            .body(BoxBody::new(
-                Full::new(Bytes::from(req.body)).map_err(|e| -> Error { Box::new(e) }),
-            )).map_err(|_| ClientError::Other("Can't create response"))?;
-
-        let mut conn = client.get_connection(&uri).await.map_err(|_| ClientError::Other("No connection"))?;
-        let resp = conn.send_request(request).await.map_err(|_| ClientError::Other("Can't send request"))?;
-
-        Ok(HttpResponse {
-            status_code: from_statuscode_v1_to_v02(resp.status()),
-            headers: from_headermap_v1_to_v02(resp.headers()),
-            body: resp.collect().await.map_err(|_| ClientError::Other("Can't receive body"))?.to_bytes().to_vec(),
+            let body = resp.collect().await.map_err(|_| ClientError::Other("Can't receive body"))?;
+            builder.body(body.to_bytes().to_vec()).map_err(|_| ClientError::Other("Can convert body"))
         })
-    })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -151,7 +151,7 @@ impl HttpService for AuthenticatorService {
         let client = self.client.get_or_try_init(async {
             let provider_metadata = CoreProviderMetadata::discover_async(
                 IssuerUrl::new(self.discovery_url.to_string())?,
-                get_client(&self.http_client)
+                &self.http_client
             ).await?;
     
             Ok::<_, Error>(CoreClient::from_provider_metadata(provider_metadata, self.client_id.clone(), Some(self.client_secret.clone())))
@@ -173,10 +173,10 @@ impl HttpService for AuthenticatorService {
 
                 let code = AuthorizationCode::new(code.to_string());
                 let request = client
-                    .exchange_code(code)
+                    .exchange_code(code)?
                     .set_redirect_uri(Cow::Owned(RedirectUrl::new(login.redirect_url.clone())?));
 
-                let ret = request.request_async(get_client(&self.http_client)).await?;
+                let ret = request.request_async(&self.http_client).await?;
 
                 let user = ret.id_token().ok_or("No ID token")?.claims(&client.id_token_verifier(), &login.nonce)?;
 
