@@ -14,7 +14,7 @@ use http_body_util::combinators::BoxBody;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::Mutex;
 
-use tokio_rustls::rustls::{ClientConfig, OwnedTrustAnchor, RootCertStore, ServerName};
+use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::TlsConnector;
 
 use crate::{error::Error, io::AsyncStream};
@@ -74,20 +74,7 @@ impl Connection {
 
 impl Client {
     pub fn new() -> Self {
-        let mut root_store = RootCertStore::empty();
-        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-            OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
-
-        let mut config = ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
+        let mut config = rustls_platform_verifier::tls_config();
         config.alpn_protocols = vec!["h2".into(), "http/1.1".into()];
 
         Self {
@@ -146,8 +133,8 @@ impl Client {
                     let port = uri.port_u16().unwrap_or(443);
                     let addr = format!("{}:{}", host, port);
                     let socket = TcpStream::connect(addr).await?;
-                    let server_name = ServerName::try_from(host.as_str())
-                        .or_else(|_| socket.peer_addr().map(|s| ServerName::IpAddress(s.ip())))?;
+                    let server_name = ServerName::try_from(host)
+                        .or_else(|_| socket.peer_addr().map(|s| ServerName::IpAddress(s.ip().into())))?;
                     let stream = self.connector.connect(server_name, socket).await?;
                     let (_, connection) = stream.get_ref();
                     let protocol = match connection.alpn_protocol() {

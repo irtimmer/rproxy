@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
-use rustls_pemfile::{certs, pkcs8_private_keys};
+use rustls_pemfile::{certs, private_key};
 
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::Acceptor;
 use tokio_rustls::{TlsAcceptor, LazyConfigAcceptor};
-use tokio_rustls::rustls::{self, Certificate, PrivateKey};
-use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::{self, ServerConfig};
 
 use std::fs::File;
 use std::error::Error;
@@ -20,8 +20,8 @@ use crate::settings;
 pub struct SniHandler {
     hostname: String,
     handler: SendableHandler,
-    certificates: Vec<Certificate>,
-    key: PrivateKey
+    certificates: Vec<CertificateDer<'static>>,
+    key: PrivateKeyDer<'static>
 }
 
 pub struct TlsHandler {
@@ -31,9 +31,9 @@ pub struct TlsHandler {
 
 pub struct LazyTlsHandler {
     handler: SendableHandler,
-    certificates: Vec<Certificate>,
+    certificates: Vec<CertificateDer<'static>>,
     sni: Vec<SniHandler>,
-    key: PrivateKey
+    key: PrivateKeyDer<'static>
 }
 
 impl SniHandler {
@@ -47,7 +47,7 @@ impl SniHandler {
             hostname: hostname.to_owned(),
             handler,
             certificates: load_certs(Path::new(certificate))?,
-            key: load_keys(Path::new(key))?.remove(0),
+            key: load_key(Path::new(key))?,
         })
     }
 }
@@ -55,12 +55,11 @@ impl SniHandler {
 impl TlsHandler {
     pub fn new(settings: &settings::Tls, handler: SendableHandler) -> Result<Self, rustls::Error> {
         let certificates = load_certs(Path::new(&settings.certificate)).unwrap();
-        let mut keys = load_keys(Path::new(&settings.key)).unwrap();
+        let key = load_key(Path::new(&settings.key)).unwrap();
 
         let mut config = ServerConfig::builder()
-            .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(certificates, keys.remove(0))?;
+            .with_single_cert(certificates, key)?;
 
         if let Some(protocols) = handler.alpn_protocols() {
             config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
@@ -83,7 +82,7 @@ impl LazyTlsHandler {
             handler,
             sni,
             certificates: load_certs(Path::new(&settings.certificate))?,
-            key: load_keys(Path::new(&settings.key))?.remove(0)
+            key: load_key(Path::new(&settings.key))?
         })
     }
 }
@@ -94,7 +93,7 @@ impl Handler for TlsHandler {
         let stream = self.acceptor.accept(stream).await?;
         let (_, conn) = stream.get_ref();
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
-        ctx.server_name = conn.sni_hostname().map(str::to_string);
+        ctx.server_name = conn.server_name().map(str::to_string);
 
         self.handler.handle(Box::pin(stream), ctx).await?;
         Ok(())
@@ -117,9 +116,8 @@ impl Handler for LazyTlsHandler {
         };
 
         let mut config = ServerConfig::builder()
-            .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(certificates.clone(), key.clone())?;
+            .with_single_cert(certificates.clone(), key.clone_key())?;
 
         if let Some(protocols) = handler.alpn_protocols() {
             config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
@@ -129,21 +127,17 @@ impl Handler for LazyTlsHandler {
         let (_, conn) = stream.get_ref();
         ctx.secure = true;
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
-        ctx.server_name = conn.sni_hostname().map(str::to_string);
+        ctx.server_name = conn.server_name().map(str::to_string);
 
         handler.handle(Box::pin(stream), ctx).await?;
         Ok(())
     }
 }
 
-fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
-    certs(&mut BufReader::new(File::open(path)?))
-        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "invalid cert"))
-        .map(|mut certs| certs.drain(..).map(Certificate).collect())
+fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
+    certs(&mut BufReader::new(File::open(path)?)).collect()
 }
 
-fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
-    pkcs8_private_keys(&mut BufReader::new(File::open(path)?))
-        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "invalid key"))
-        .map(|mut keys| keys.drain(..).map(PrivateKey).collect())
+fn load_key(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
+    private_key(&mut BufReader::new(File::open(path)?)).and_then(|x| x.ok_or(io::Error::new(ErrorKind::InvalidData, "No private key")))
 }
