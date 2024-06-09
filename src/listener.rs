@@ -34,7 +34,9 @@ impl Listener for TcpListener {
         while let Ok((stream, _)) = self.listener.accept().await {
             let handler = self.handler.clone();
             tokio::spawn(async move {
-                let r = handler.handle(Box::pin(stream), Context::default()).await;
+                let mut ctx = Context::default();
+                ctx.addr = stream.peer_addr().ok().map(|x| x.ip());
+                let r = handler.handle(Box::pin(stream), ctx).await;
                 if let Err(e) = r {
                     println!("Error while handling {}", e);
                 }

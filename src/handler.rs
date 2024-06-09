@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 
 use std::error::Error;
+use std::net::IpAddr;
 
 use crate::io::SendableAsyncStream;
 
 #[derive(Default, Clone)]
 pub struct Context {
     pub secure: bool,
+    pub addr: Option<IpAddr>,
     pub alpn: Option<String>,
     pub server_name: Option<String>
 }

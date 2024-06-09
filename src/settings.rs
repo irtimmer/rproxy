@@ -5,12 +5,13 @@ use config::{Config, ConfigError, File};
 use futures::future::{join_all, try_join_all};
 use serde_derive::Deserialize;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error::Error;
 use crate::handler::{self};
 use crate::listener::{self, TcpListener};
-use crate::http::{self, HttpHandler, Http1Handler, Http2Handler, HelloService, ProxyService, FileService, RouterService, AuthenticatorService};
+use crate::http::{self, AuthenticatorService, FileService, HelloService, Http1Handler, Http2Handler, HttpHandler, LogLayer, ProxyService, RouterService};
 use crate::tls::{self, TlsHandler, LazyTlsHandler};
 use crate::tunnel::TunnelHandler;
 
@@ -65,7 +66,19 @@ pub struct Tunnel {
 
 #[derive(Debug, Deserialize)]
 pub struct Http {
-    pub service: Service
+    pub service: Service,
+    pub layers: Option<Vec<Layer>>
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Layer {
+    Log(Log)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Log {
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,19 +144,19 @@ pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler
         Handler::LazyTls(s) => Box::new(LazyTlsHandler::new(s, build_handler(&s.handler).await?, try_join_all(s.sni.iter().map(|x| async {
             Ok::<tls::SniHandler, Error>(tls::SniHandler::new(&x.hostname, build_handler(&x.handler).await?, &x.certificate, &x.key)?)
         })).await?)?),
-        Handler::Http(s) => Box::new(HttpHandler::new(build_service(&s.service).await?)),
-        Handler::Http1(s) => Box::new(Http1Handler::new(build_service(&s.service).await?)),
-        Handler::Http2(s) => Box::new(Http2Handler::new(build_service(&s.service).await?))
+        Handler::Http(s) => Box::new(HttpHandler::new(build_service(&s.service, s.layers.as_ref()).await?)),
+        Handler::Http1(s) => Box::new(Http1Handler::new(build_service(&s.service, s.layers.as_ref()).await?)),
+        Handler::Http2(s) => Box::new(Http2Handler::new(build_service(&s.service, s.layers.as_ref()).await?))
     };
     Ok(handler)
 }
 
 #[async_recursion]
-pub async fn build_service(service: &Service) -> Result<Arc<dyn http::HttpService + Send + Sync>, Error> {
-    let service: Arc<dyn http::HttpService + Send + Sync> = match service {
+pub async fn build_service(service: &Service, layers: Option<&Vec<Layer>>) -> Result<Arc<dyn http::HttpService + Send + Sync>, Error> {
+    let mut service: Arc<dyn http::HttpService + Send + Sync> = match service {
         Service::Hello => Arc::new(HelloService {}),
         Service::Authenticator(s) => Arc::new(AuthenticatorService::new(
-            build_service(&s.service).await.unwrap(),
+            build_service(&s.service, None).await.unwrap(),
             &s.discovery_url,
             &s.client_id,
             &s.client_secret
@@ -153,9 +166,18 @@ pub async fn build_service(service: &Service) -> Result<Arc<dyn http::HttpServic
         Service::Router(s) => Arc::new(RouterService::new(join_all(s.routes.iter().map(|x| async {
             http::Route {
                 route: x.path.clone(),
-                service: build_service(&x.service).await.unwrap()
+                service: build_service(&x.service, None).await.unwrap()
             }
         })).await))
     };
+
+    if let Some(layers) = layers {
+        for layer in layers {
+            match layer {
+                Layer::Log(s) => service = Arc::new(LogLayer::new(service, &s.path).await?)
+            }
+        }
+    }
+
     Ok(service)
 }
