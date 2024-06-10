@@ -73,7 +73,8 @@ pub struct Http {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Layer {
-    Log(Log)
+    Log(Log),
+    Authenticator(Authenticator)
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,7 +86,6 @@ pub struct Log {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Service {
     Hello,
-    Authenticator(Authenticator),
     Proxy(Proxy),
     File(Files),
     Router(Router)
@@ -93,7 +93,6 @@ pub enum Service {
 
 #[derive(Debug, Deserialize)]
 pub struct Authenticator {
-    pub service: Box<Service>,
     pub discovery_url: String,
     pub client_id: String,
     pub client_secret: String,
@@ -155,12 +154,6 @@ pub async fn build_handler(handler: &Handler) -> Result<Box<dyn handler::Handler
 pub async fn build_service(service: &Service, layers: Option<&Vec<Layer>>) -> Result<Arc<dyn http::HttpService + Send + Sync>, Error> {
     let mut service: Arc<dyn http::HttpService + Send + Sync> = match service {
         Service::Hello => Arc::new(HelloService {}),
-        Service::Authenticator(s) => Arc::new(AuthenticatorService::new(
-            build_service(&s.service, None).await.unwrap(),
-            &s.discovery_url,
-            &s.client_id,
-            &s.client_secret
-        ).await?),
         Service::Proxy(s) => Arc::new(ProxyService::new((&s.uri).try_into()?)),
         Service::File(s) => Arc::new(FileService::new(&s.path)),
         Service::Router(s) => Arc::new(RouterService::new(join_all(s.routes.iter().map(|x| async {
@@ -174,7 +167,13 @@ pub async fn build_service(service: &Service, layers: Option<&Vec<Layer>>) -> Re
     if let Some(layers) = layers {
         for layer in layers {
             match layer {
-                Layer::Log(s) => service = Arc::new(LogLayer::new(service, &s.path).await?)
+                Layer::Log(s) => service = Arc::new(LogLayer::new(service, &s.path).await?),
+                Layer::Authenticator(s) => service = Arc::new(AuthenticatorService::new(
+                    service,
+                    &s.discovery_url,
+                    &s.client_id,
+                    &s.client_secret
+                ).await?)
             }
         }
     }
