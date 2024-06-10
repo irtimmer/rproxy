@@ -41,7 +41,7 @@ impl HttpService for LogLayer {
 
         let now = Local::now();
         let time_local = now.format("[%d/%b/%Y:%H:%M:%S %z]").to_string();
-        let request = req.uri().to_string();
+        let request = req.uri().path_and_query().map(|e| e.to_string()).unwrap_or("/".to_owned());
         let http_referer = req.headers().get("Referer").map(|e| e.to_str().unwrap()).unwrap_or("-").to_owned();
         let http_user_agent = req.headers().get("User-Agent").map(|e| e.to_str().unwrap()).unwrap_or("-").to_owned();
         let resp = self.service.call(req).await;
