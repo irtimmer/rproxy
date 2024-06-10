@@ -232,6 +232,8 @@ impl HttpService for AuthenticatorService {
 
         if let Some(cookie) = cookie {
             let mut cookie_header = vec!(format!("{}={}", self.session_cookie, cookie));
+            cookie_header.push("HttpOnly".to_string());
+            cookie_header.push(format!("Path={}", "/"));
             if ctx.secure {
                 cookie_header.push("Secure".to_string());
             }
