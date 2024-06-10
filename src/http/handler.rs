@@ -135,9 +135,8 @@ impl HttpHandler {
 impl Handler for HttpHandler {
     async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         match ctx.alpn.as_deref() {
-            Some("http/1.1") => self.http1.handle(stream, ctx).await,
             Some("h2") => self.http2.handle(stream, ctx).await,
-            _ => return Err("Unknown protocol".into())
+            _ => self.http1.handle(stream, ctx).await,
         }
     }
 
