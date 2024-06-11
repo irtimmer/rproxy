@@ -156,6 +156,8 @@ impl Client {
                     .handshake(stream)
                     .await?;
 
+                let conn = conn.with_upgrades();
+
                 tokio::task::spawn(async move {
                     if let Err(err) = conn.await {
                         println!("Connection failed: {:?}", err);
