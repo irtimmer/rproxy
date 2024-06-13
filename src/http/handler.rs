@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::{http1, http2};
 use hyper::service::Service;
-use hyper::{Request, Response, StatusCode, Uri, Version};
+use hyper::{Request, Response, StatusCode, Version};
 
 use hyper_util::rt::{TokioIo, TokioExecutor};
 
@@ -18,6 +18,7 @@ use http_body_util::{BodyExt, Empty};
 use http_body_util::combinators::BoxBody;
 
 use crate::handler::{Handler, Context};
+use crate::http::utils::UriExt;
 use crate::io::SendableAsyncStream;
 
 use super::HttpService;
@@ -56,7 +57,7 @@ impl Service<Request<Incoming>> for HyperService {
                 }
             }
 
-            normalize_uri(&mut req)?;
+            *req.uri_mut() = req.uri().clone().normalize_path()?;
             match service.call(req).await {
                 Err(e) => {
                     eprintln!("Internal server error: {}", e);
@@ -70,39 +71,6 @@ impl Service<Request<Incoming>> for HyperService {
             }
         })
     }
-}
-
-fn normalize_uri(req: &mut Request<Incoming>) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut stack = vec![""];
-    let mut trailing_slash = false;
-    req.uri().path().split('/').for_each(|e| match e {
-        "" | "." => trailing_slash = true,
-        ".." => {
-            trailing_slash = true;
-            if stack.len() > 1 {
-                stack.pop();
-            }
-        },
-        _ => {
-            trailing_slash = false;
-            stack.push(e)
-        }
-    });
-    if trailing_slash {
-        stack.push("");
-    }
-    let path = stack.join("/");
-    if path.len() != req.uri().path().len() {
-        let mut parts = req.uri().clone().into_parts();
-        let path_and_query = match req.uri().query() {
-            Some(q) => [&path, q].join("?"),
-            None => path
-        };
-        parts.path_and_query = Some(path_and_query.try_into()?);
-        *req.uri_mut() = Uri::from_parts(parts)?;
-    };
-
-    Ok(())
 }
 
 pub struct HttpHandler {

@@ -4,6 +4,7 @@ mod handler;
 mod log;
 mod proxy;
 mod service;
+mod utils;
 mod hello;
 mod file;
 mod router;
