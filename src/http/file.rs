@@ -13,8 +13,7 @@ use hyper::{Request, Response};
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
-use crate::error::Error;
-use super::HttpService;
+use super::{HttpError, HttpService};
 
 pub struct FileService {
     path: PathBuf,
@@ -28,14 +27,14 @@ impl FileService {
 
 #[async_trait]
 impl HttpService for FileService {
-    async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
+    async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, HttpError>>, HttpError> {
         // UNSAFE: path is not validated
         let path = self.path.join(&req.uri().path()[1..]);
         let file = File::open(path).await?;
         let meta = file.metadata().await?;
         let stream = ReaderStream::new(file);
         let body = StreamBody::new(
-            stream.map(|s| s.map(|b| Frame::data(b)).map_err(|e| Box::new(e) as Error)),
+            stream.map(|s| s.map(|b| Frame::data(b)).map_err(From::from)),
         );
         let mut builder = Response::builder().header(CONTENT_LENGTH, meta.len());
         if let Some(mime) = mime_guess::from_path(req.uri().path()).first_raw() {

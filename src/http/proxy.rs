@@ -1,4 +1,4 @@
-use std::{error::Error, mem};
+use std::mem;
 
 use async_trait::async_trait;
 
@@ -17,7 +17,7 @@ use hyper::{header, Request, Response, StatusCode, Uri, Version};
 use tokio::io::copy_bidirectional;
 
 use super::client::{Client, Connection};
-use super::HttpService;
+use super::{HttpError, HttpService};
 
 pub struct ProxyService {
     client: Client,
@@ -35,11 +35,7 @@ impl ProxyService {
 
 #[async_trait]
 impl HttpService for ProxyService {
-    async fn call(
-        &self,
-        req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, Box<dyn Error + Send + Sync>>>, Box<dyn Error + Send + Sync>>
-    {
+    async fn call(&self, mut req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, HttpError>>, HttpError> {
         let (req_parts, body) = req.into_parts();
 
         let mut parts = req_parts.uri.clone().into_parts();
@@ -48,10 +44,8 @@ impl HttpService for ProxyService {
 
         let mut sender = self.client.get_connection(&self.uri).await?;
 
-        let mut proxy_body =
-            BoxBody::new(body.map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }));
-        let mut req_body: BoxBody<Bytes, Box<dyn Error + Send + Sync>> =
-            BoxBody::new(Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }));
+        let mut proxy_body = BoxBody::new(body.map_err(From::from));
+        let mut req_body: BoxBody<Bytes, HttpError> = BoxBody::new(Empty::new().map_err(From::from));
         if let Some(connection) = req_parts.headers.get(header::CONNECTION) {
             if connection == "upgrade" {
                 mem::swap(&mut proxy_body, &mut req_body);
@@ -110,9 +104,7 @@ impl HttpService for ProxyService {
         let response = sender.send_request(request).await?;
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
             let mut upgrade_response = Response::builder().body(
-                Empty::new()
-                    .map_err(|e| -> Box<dyn Error + Sync + Send> { Box::new(e) })
-                    .boxed(),
+                Empty::new().map_err(From::from).boxed(),
             )?;
             *upgrade_response.headers_mut() = response.headers().clone();
             *upgrade_response.status_mut() = response.status();
@@ -130,10 +122,7 @@ impl HttpService for ProxyService {
 
             Ok(upgrade_response)
         } else {
-            Ok(response.map(|b| {
-                b.map_err(|e| -> Box<dyn Error + Sync + Send> { Box::new(e) })
-                    .boxed()
-            }))
+            Ok(response.map(|b| b.map_err(From::from).boxed()))
         }
     }
 }

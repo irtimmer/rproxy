@@ -17,11 +17,13 @@ use tokio::sync::Mutex;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::TlsConnector;
 
-use crate::{error::Error, io::AsyncStream};
+use crate::io::AsyncStream;
+
+use super::HttpError;
 
 pub enum Connection {
-    Http1(http1::SendRequest<BoxBody<Bytes, Error>>),
-    Http2(http2::SendRequest<BoxBody<Bytes, Error>>),
+    Http1(http1::SendRequest<BoxBody<Bytes, HttpError>>),
+    Http2(http2::SendRequest<BoxBody<Bytes, HttpError>>),
     None,
 }
 
@@ -53,8 +55,8 @@ impl Drop for Reservation {
 impl Reservation {
     pub async fn send_request(
         &mut self,
-        req: Request<BoxBody<Bytes, Error>>,
-    ) -> Result<hyper::Response<hyper::body::Incoming>, hyper::Error> {
+        req: Request<BoxBody<Bytes, HttpError>>,
+    ) -> Result<hyper::Response<hyper::body::Incoming>, HttpError> {
         self.conn.send_request(req).await
     }
 }
@@ -62,11 +64,11 @@ impl Reservation {
 impl Connection {
     pub async fn send_request(
         &mut self,
-        req: Request<BoxBody<Bytes, Error>>,
-    ) -> Result<hyper::Response<hyper::body::Incoming>, hyper::Error> {
+        req: Request<BoxBody<Bytes, HttpError>>,
+    ) -> Result<hyper::Response<hyper::body::Incoming>, HttpError> {
         match self {
-            Connection::Http1(x) => x.send_request(req).await,
-            Connection::Http2(x) => x.send_request(req).await,
+            Connection::Http1(x) => x.send_request(req).await.map_err(From::from),
+            Connection::Http2(x) => x.send_request(req).await.map_err(From::from),
             Connection::None => unreachable!(),
         }
     }
@@ -83,7 +85,7 @@ impl Client {
         }
     }
 
-    pub async fn get_connection(&self, uri: &Uri) -> Result<Reservation, Error> {
+    pub async fn get_connection(&self, uri: &Uri) -> Result<Reservation, HttpError> {
         let mut pool = self.pool.lock().await;
         if let Some(pool) = pool.get_mut(uri) {
             let mut conn = None;
@@ -115,7 +117,7 @@ impl Client {
         })
     }
 
-    async fn connect(&self, uri: &Uri) -> Result<Connection, Error> {
+    async fn connect(&self, uri: &Uri) -> Result<Connection, HttpError> {
         let (socket, version): (Box<dyn AsyncStream + Send + Unpin>, Version) =
             match uri.scheme().ok_or("No scheme specified")?.as_str() {
                 "unix" => (

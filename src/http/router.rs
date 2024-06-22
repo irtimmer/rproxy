@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,6 +8,8 @@ use hyper::{Request, Response, Uri};
 use http_body_util::combinators::BoxBody;
 
 use crate::http::HttpService;
+
+use super::HttpError;
 
 pub struct Route {
     pub route: String,
@@ -31,11 +32,7 @@ impl RouterService {
 
 #[async_trait]
 impl HttpService for RouterService {
-    async fn call(
-        &self,
-        mut req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, Box<dyn Error + Send + Sync>>>, Box<dyn Error + Send + Sync>>
-    {
+    async fn call(&self, mut req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, HttpError>>, HttpError> {
         let (index, prefix) = self
             .prefixes
             .iter()

@@ -20,8 +20,9 @@ use hyper::{header, Request, Response, StatusCode, Uri};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
+use openidconnect::url::ParseError;
 use openidconnect::{
-    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, HttpRequest, HttpResponse, IssuerUrl, Nonce, RedirectUrl, Scope, TokenResponse
+    AsyncHttpClient, AuthorizationCode, ClaimsVerificationError, ClientId, ClientSecret, ConfigurationError, CsrfToken, DiscoveryError, EndpointMaybeSet, EndpointNotSet, EndpointSet, ErrorResponse, HttpRequest, HttpResponse, IssuerUrl, Nonce, RedirectUrl, RequestTokenError, Scope, TokenResponse
 };
 
 use serde_derive::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ use crate::error::Error;
 use crate::handler::Context;
 use crate::http::HttpService;
 
-use super::{Client, HttpContext};
+use super::{Client, HttpContext, HttpError};
 
 type OIDCClient = CoreClient<
     EndpointSet,
@@ -85,7 +86,7 @@ impl<'c> AsyncHttpClient<'c> for Client {
 
             let request = request
                 .body(BoxBody::new(
-                    Full::new(Bytes::from(req.body().clone())).map_err(|e| -> Error { Box::new(e) }),
+                    Full::new(Bytes::from(req.body().clone())).map_err(From::from),
                 )).map_err(|_| ClientError::Other("Can't create response"))?;
 
             let mut conn = self.get_connection(req.uri()).await.map_err(|_| ClientError::Other("No connection"))?;
@@ -99,6 +100,54 @@ impl<'c> AsyncHttpClient<'c> for Client {
             let body = resp.collect().await.map_err(|_| ClientError::Other("Can't receive body"))?;
             builder.body(body.to_bytes().to_vec()).map_err(|_| ClientError::Other("Can convert body"))
         })
+    }
+}
+
+impl From<ParseError> for HttpError {
+    fn from(error: ParseError) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl From<async_session::Error> for HttpError {
+    fn from(error: async_session::Error) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl From<async_session::serde_json::Error> for HttpError {
+    fn from(error: async_session::serde_json::Error) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl From<ClaimsVerificationError> for HttpError {
+    fn from(error: ClaimsVerificationError) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl From<ClientError> for HttpError {
+    fn from(error: ClientError) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl From<ConfigurationError> for HttpError {
+    fn from(error: ConfigurationError) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl<T: std::error::Error, U: ErrorResponse> From<RequestTokenError<T, U>> for HttpError {
+    fn from(error: RequestTokenError<T, U>) -> Self {
+        HttpError::String(error.to_string())
+    }
+}
+
+impl<T: std::error::Error> From<DiscoveryError<T>> for HttpError {
+    fn from(error: DiscoveryError<T>) -> Self {
+        HttpError::String(error.to_string())
     }
 }
 
@@ -127,7 +176,7 @@ impl AuthenticatorService {
 
 #[async_trait]
 impl HttpService for AuthenticatorService {
-    async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
+    async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, HttpError>>, HttpError> {
         let http_ctx = req.extensions().get::<HttpContext>().ok_or("No HttpContext")?;
         let ctx = req.extensions().get::<Context>().ok_or("No Context")?;
 
@@ -154,7 +203,7 @@ impl HttpService for AuthenticatorService {
                 &self.http_client
             ).await?;
     
-            Ok::<_, Error>(CoreClient::from_provider_metadata(provider_metadata, self.client_id.clone(), Some(self.client_secret.clone())))
+            Ok::<_, HttpError>(CoreClient::from_provider_metadata(provider_metadata, self.client_id.clone(), Some(self.client_secret.clone())))
         }).await?;
 
         let session = if let (Some(mut session), Some(query)) = (session, req.uri().query()) {
@@ -180,7 +229,7 @@ impl HttpService for AuthenticatorService {
 
                 let user = ret.id_token().ok_or("No ID token")?.claims(&client.id_token_verifier(), &login.nonce)?;
 
-                let body = BoxBody::new(Empty::new().map_err(|e| -> Error { Box::new(e) }));
+                let body = BoxBody::new(Empty::new().map_err(From::from));
                 let resp = Response::builder()
                     .header(header::LOCATION, HeaderValue::from_str(&login.redirect_url)?)
                     .status(StatusCode::TEMPORARY_REDIRECT);
@@ -218,7 +267,7 @@ impl HttpService for AuthenticatorService {
             .add_scope(Scope::new("email".to_string()))
             .url();
 
-        let body = BoxBody::new(Empty::new().map_err(|e| -> Error { Box::new(e) }));
+        let body = BoxBody::new(Empty::new().map_err(From::from));
         let mut resp = Response::builder().header(header::LOCATION, redirect.to_string()).status(StatusCode::TEMPORARY_REDIRECT);
 
         let mut session = session.unwrap_or_default();

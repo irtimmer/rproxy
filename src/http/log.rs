@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use crate::error::Error;
 use crate::handler::Context;
 
-use super::HttpService;
+use super::{HttpError, HttpService};
 
 pub struct LogLayer {
     service: Arc<dyn HttpService + Send + Sync>,
@@ -34,7 +34,7 @@ impl LogLayer {
 
 #[async_trait]
 impl HttpService for LogLayer {
-    async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
+    async fn call(&self, req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, HttpError>>, HttpError> {
         let ctx = req.extensions().get::<Context>().unwrap();
         let remote_addr = ctx.addr.map(|e| e.to_string()).unwrap_or("-".to_owned());
         let remote_user = "-";

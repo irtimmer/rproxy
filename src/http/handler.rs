@@ -21,7 +21,7 @@ use crate::handler::{Handler, Context};
 use crate::http::utils::UriExt;
 use crate::io::SendableAsyncStream;
 
-use super::HttpService;
+use super::{HttpError, HttpService};
 
 struct HyperService {
     service: Arc<dyn HttpService + Send + Sync>,
@@ -34,8 +34,12 @@ pub struct HttpContext {
     pub sessions: MemoryStore
 }
 
+impl HyperService {
+
+}
+
 impl Service<Request<Incoming>> for HyperService {
-    type Response = Response<BoxBody<Bytes, Self::Error>>;
+    type Response = Response<BoxBody<Bytes, HttpError>>;
     type Error = Box<dyn Error + Send + Sync>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -49,11 +53,10 @@ impl Service<Request<Incoming>> for HyperService {
         Box::pin(async move {
             if req.version() == Version::HTTP_2 {
                 if req.uri().authority().map(|e| e.to_string()) != server_name {
-                    let mut res: Self::Response = Response::new(BoxBody::new(
-                        Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }),
-                    ));
-                    *res.status_mut() = StatusCode::MISDIRECTED_REQUEST;
-                    return Ok(res)
+                    return Ok(Response::builder()
+                        .status(StatusCode::MISDIRECTED_REQUEST)
+                        .body(BoxBody::new(Empty::new().map_err(From::from)))?
+                    );
                 }
             }
 
@@ -62,12 +65,12 @@ impl Service<Request<Incoming>> for HyperService {
                 Err(e) => {
                     eprintln!("Internal server error: {}", e);
                     let mut res: Self::Response = Response::new(BoxBody::new(
-                        Empty::new().map_err(|e| -> Box<dyn Error + Send + Sync> { Box::new(e) }),
+                        Empty::new().map_err(From::from),
                     ));
                     *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                     Ok(res)
                 }
-                res => res,
+                res => res.map_err(From::from),
             }
         })
     }
