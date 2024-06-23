@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use std::error::Error;
 use std::net::IpAddr;
 
-use crate::io::SendableAsyncStream;
+use crate::io::ProxyStream;
 
 #[derive(Default, Clone)]
 pub struct Context {
@@ -15,7 +15,7 @@ pub struct Context {
 
 #[async_trait]
 pub trait Handler {
-    async fn handle(&self, mut stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>>;
+    async fn handle(&self, mut stream: ProxyStream, ctx: Context) -> Result<(), Box<dyn Error>>;
 
     fn alpn_protocols(&self) -> Option<Vec<String>> {
         None

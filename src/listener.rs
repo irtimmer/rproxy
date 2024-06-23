@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::handler::Context;
 use crate::handler::Handler;
 use crate::handler::SendableHandler;
+use crate::io::ProxyStream;
 
 #[async_trait]
 pub trait Listener {
@@ -36,7 +37,7 @@ impl Listener for TcpListener {
             tokio::spawn(async move {
                 let mut ctx = Context::default();
                 ctx.addr = stream.peer_addr().ok().map(|x| x.ip());
-                let r = handler.handle(Box::pin(stream), ctx).await;
+                let r = handler.handle(ProxyStream::new_tcp(stream), ctx).await;
                 if let Err(e) = r {
                     println!("Error while handling {}", e);
                 }

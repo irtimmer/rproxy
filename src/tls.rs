@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::handler::{SendableHandler, Handler, Context};
-use crate::io::SendableAsyncStream;
+use crate::io::ProxyStream;
 use crate::settings;
 
 pub struct SniHandler {
@@ -89,20 +89,20 @@ impl LazyTlsHandler {
 
 #[async_trait]
 impl Handler for TlsHandler {
-    async fn handle(&self, stream: SendableAsyncStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: ProxyStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
         let stream = self.acceptor.accept(stream).await?;
         let (_, conn) = stream.get_ref();
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
         ctx.server_name = conn.server_name().map(str::to_string);
 
-        self.handler.handle(Box::pin(stream), ctx).await?;
+        self.handler.handle(ProxyStream::new_dynamic(Box::pin(stream)), ctx).await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl Handler for LazyTlsHandler {
-    async fn handle(&self, stream: SendableAsyncStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: ProxyStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
         let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
 
         let (certificates, key, handler) = if let Some(sni) = self
@@ -129,7 +129,7 @@ impl Handler for LazyTlsHandler {
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
         ctx.server_name = conn.server_name().map(str::to_string);
 
-        handler.handle(Box::pin(stream), ctx).await?;
+        handler.handle(ProxyStream::new_dynamic(Box::pin(stream)), ctx).await?;
         Ok(())
     }
 }

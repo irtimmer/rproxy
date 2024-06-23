@@ -19,7 +19,7 @@ use http_body_util::combinators::BoxBody;
 
 use crate::handler::{Handler, Context};
 use crate::http::utils::UriExt;
-use crate::io::SendableAsyncStream;
+use crate::io::ProxyStream;
 
 use super::{HttpError, HttpService};
 
@@ -104,7 +104,7 @@ impl HttpHandler {
 
 #[async_trait]
 impl Handler for HttpHandler {
-    async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: ProxyStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         match ctx.alpn.as_deref() {
             Some("h2") => self.http2.handle(stream, ctx).await,
             _ => self.http1.handle(stream, ctx).await,
@@ -133,7 +133,7 @@ impl Http1Handler {
 
 #[async_trait]
 impl Handler for Http1Handler {
-    async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: ProxyStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         let service = HyperService {
             service: self.service.clone(),
             http_ctx: self.context.clone(),
@@ -168,7 +168,7 @@ impl Http2Handler {
 
 #[async_trait]
 impl Handler for Http2Handler {
-    async fn handle(&self, stream: SendableAsyncStream, ctx: Context) -> Result<(), Box<dyn Error>> {
+    async fn handle(&self, stream: ProxyStream, ctx: Context) -> Result<(), Box<dyn Error>> {
         let service = HyperService {
             service: self.service.clone(),
             http_ctx: self.context.clone(),
