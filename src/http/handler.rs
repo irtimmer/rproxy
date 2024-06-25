@@ -52,7 +52,7 @@ impl Service<Request<Incoming>> for HyperService {
 
         Box::pin(async move {
             if req.version() == Version::HTTP_2 {
-                if req.uri().authority().map(|e| e.to_string()) != server_name {
+                if req.uri().authority().map(|e| e.host()) != server_name.as_ref().map(|e| e.as_str()) {
                     return Ok(Response::builder()
                         .status(StatusCode::MISDIRECTED_REQUEST)
                         .body(BoxBody::new(Empty::new().map_err(From::from)))?
