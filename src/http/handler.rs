@@ -95,9 +95,13 @@ pub struct Http2Handler {
 
 impl HttpHandler {
     pub fn new(service: Arc<dyn HttpService + Send + Sync>) -> Self {
+        let context = HttpContext {
+            sessions: MemoryStore::new()
+        };
+
         Self {
-            http1: Http1Handler::new(service.clone()),
-            http2: Http2Handler::new(service)
+            http1: Http1Handler::new_with_context(service.clone(), context.clone()),
+            http2: Http2Handler::new_with_context(service, context)
         }
     }
 }
@@ -127,6 +131,17 @@ impl Http1Handler {
             context: HttpContext {
                 sessions: MemoryStore::new()
             }
+        }
+    }
+
+    pub fn new_with_context(service: Arc<dyn HttpService + Send + Sync>, context: HttpContext) -> Self {
+        let mut builder = http1::Builder::new();
+        builder.preserve_header_case(true).title_case_headers(true);
+
+        Self {
+            builder,
+            service,
+            context
         }
     }
 }
@@ -162,6 +177,16 @@ impl Http2Handler {
             context: HttpContext {
                 sessions: MemoryStore::new()
             }
+        }
+    }
+
+    pub fn new_with_context(service: Arc<dyn HttpService + Send + Sync>, context: HttpContext) -> Self {
+        let builder = http2::Builder::new(TokioExecutor::new());
+
+        Self {
+            builder,
+            service,
+            context
         }
     }
 }
