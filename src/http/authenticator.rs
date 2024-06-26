@@ -180,15 +180,20 @@ impl HttpService for AuthenticatorService {
         let http_ctx = req.extensions().get::<HttpContext>().ok_or("No HttpContext")?;
         let ctx = req.extensions().get::<Context>().ok_or("No Context")?;
 
-        let session_cookie = req.headers().get(header::COOKIE).and_then(|cookies|
-            Cookie::split_parse(cookies.to_str().ok()?)
-                .find_map(|c| c.ok().filter(|c| c.name() == self.session_cookie))
-        );
+        let session_cookies: Vec<Cookie> = req.headers().get_all(header::COOKIE).iter()
+            .filter_map(|c| c.to_str().ok())
+            .map(|c| Cookie::split_parse(c)
+                .filter_map(|c| c.ok().filter(|c| c.name() == self.session_cookie)))
+            .flatten().collect();
 
-        let session = match session_cookie {
-            Some(session_cookie) => http_ctx.sessions.load_session(session_cookie.value().to_string()).await?,
-            None => None
-        }.and_then(|session| session.validate());
+        let mut session = None;
+        for session_cookie in session_cookies {
+            let session_candidate = http_ctx.sessions.load_session(session_cookie.value().to_string()).await?.and_then(|session| session.validate());
+            if session_candidate.is_some() {
+                session = session_candidate;
+                break
+            }
+        }
 
         //User is set when the user is logged in
         let user = Option::from(&session).and_then(|session: &Session| session.get::<String>("user"));
