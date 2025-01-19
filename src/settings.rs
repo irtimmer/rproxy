@@ -37,7 +37,8 @@ pub struct SniHandler {
     pub hostname: String,
     pub certificate: String,
     pub key: String,
-    pub handler: Box<Handler>
+    pub handler: Box<Handler>,
+    pub ktls: Option<bool>
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +46,7 @@ pub struct Tls {
     pub certificate: String,
     pub key: String,
     pub handler: Box<Handler>,
+    pub ktls: Option<bool>,
     pub sni: Vec<SniHandler>
 }
 

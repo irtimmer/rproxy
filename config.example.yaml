@@ -25,6 +25,7 @@ servers:
     # TLS protocol handler
     handler:
       type: lazytls
+      ktls: false # Enable kernel TLS
       # Default certificate and HTTP protocol handler
       certificate: /etc/letsencrypt/live/fallback.com/fullchain.pem
       key: /etc/letsencrypt/live/fallback.com/fullchain.pem

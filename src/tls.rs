@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use ktls::{config_ktls_server, CorkStream};
+
 use rustls_pemfile::{certs, private_key};
 
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -11,10 +13,11 @@ use std::fs::File;
 use std::error::Error;
 use std::io::{self, BufReader, ErrorKind};
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::handler::{SendableHandler, Handler, Context};
-use crate::io::ProxyStream;
+use crate::io::{ProxyStream, SendableAsyncStream};
 use crate::settings;
 
 pub struct SniHandler {
@@ -26,11 +29,13 @@ pub struct SniHandler {
 
 pub struct TlsHandler {
     acceptor: TlsAcceptor,
-    handler: SendableHandler
+    handler: SendableHandler,
+    ktls: bool
 }
 
 pub struct LazyTlsHandler {
     handler: SendableHandler,
+    ktls: bool,
     certificates: Vec<CertificateDer<'static>>,
     sni: Vec<SniHandler>,
     key: PrivateKeyDer<'static>
@@ -61,12 +66,15 @@ impl TlsHandler {
             .with_no_client_auth()
             .with_single_cert(certificates, key)?;
 
+        config.enable_secret_extraction = true;
+
         if let Some(protocols) = handler.alpn_protocols() {
             config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
         }
 
         Ok(Self {
             acceptor: TlsAcceptor::from(Arc::new(config)),
+            ktls: settings.ktls.unwrap_or(false),
             handler
         })
     }
@@ -79,6 +87,7 @@ impl LazyTlsHandler {
         sni: Vec<SniHandler>,
     ) -> io::Result<Self> {
         Ok(Self {
+            ktls: settings.ktls.unwrap_or(false),
             handler,
             sni,
             certificates: load_certs(Path::new(&settings.certificate))?,
@@ -90,11 +99,15 @@ impl LazyTlsHandler {
 #[async_trait]
 impl Handler for TlsHandler {
     async fn handle(&self, stream: ProxyStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
-        let stream = self.acceptor.accept(stream).await?;
+        let stream = self.acceptor.accept(CorkStream::new(stream)).await?;
         let (_, conn) = stream.get_ref();
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
         ctx.server_name = conn.server_name().map(str::to_string);
 
+        let stream: SendableAsyncStream = match self.ktls {
+            true => Box::pin(config_ktls_server(stream).await?),
+            false => Box::pin(stream)
+        };
         self.handler.handle(ProxyStream::new_dynamic(Box::pin(stream)), ctx).await?;
         Ok(())
     }
@@ -103,7 +116,7 @@ impl Handler for TlsHandler {
 #[async_trait]
 impl Handler for LazyTlsHandler {
     async fn handle(&self, stream: ProxyStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
-        let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
+        let acceptor = LazyConfigAcceptor::new(Acceptor::default(), CorkStream::new(stream)).await?;
 
         let (certificates, key, handler) = if let Some(sni) = self
             .sni
@@ -119,6 +132,8 @@ impl Handler for LazyTlsHandler {
             .with_no_client_auth()
             .with_single_cert(certificates.clone(), key.clone_key())?;
 
+        config.enable_secret_extraction = true;
+
         if let Some(protocols) = handler.alpn_protocols() {
             config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
         }
@@ -129,6 +144,10 @@ impl Handler for LazyTlsHandler {
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
         ctx.server_name = conn.server_name().map(str::to_string);
 
+        let stream: SendableAsyncStream = match self.ktls {
+            true => Box::pin(config_ktls_server(stream).await?),
+            false => Box::pin(stream)
+        };
         handler.handle(ProxyStream::new_dynamic(Box::pin(stream)), ctx).await?;
         Ok(())
     }

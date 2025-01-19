@@ -1,4 +1,7 @@
+use std::os::fd::AsRawFd;
 use std::pin::Pin;
+
+use ktls::AsyncReadReady;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -66,6 +69,24 @@ impl AsyncWrite for ProxyStream {
         match self.get_mut() {
             ProxyStream::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
             ProxyStream::Dynamic(stream) => Pin::new(stream).poll_shutdown(cx)
+        }
+    }
+}
+
+impl AsyncReadReady for ProxyStream {
+    fn poll_read_ready(&self, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        match self {
+            ProxyStream::Tcp(stream) => stream.poll_read_ready(cx),
+            ProxyStream::Dynamic(_) => std::task::Poll::Ready(Ok(()))
+        }
+    }
+}
+
+impl AsRawFd for ProxyStream {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        match self {
+            ProxyStream::Tcp(stream) => stream.as_raw_fd(),
+            ProxyStream::Dynamic(_) => -1.as_raw_fd()
         }
     }
 }
