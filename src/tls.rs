@@ -9,6 +9,8 @@ use tokio_rustls::rustls::server::Acceptor;
 use tokio_rustls::{TlsAcceptor, LazyConfigAcceptor};
 use tokio_rustls::rustls::{self, ServerConfig};
 
+use wildmatch::WildMatch;
+
 use std::fs::File;
 use std::error::Error;
 use std::io::{self, BufReader, ErrorKind};
@@ -21,7 +23,7 @@ use crate::io::{ProxyStream, SendableAsyncStream};
 use crate::settings;
 
 pub struct SniHandler {
-    hostname: String,
+    hostname: WildMatch,
     handler: SendableHandler,
     certificates: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>
@@ -49,7 +51,7 @@ impl SniHandler {
         key: &str,
     ) -> io::Result<Self> {
         Ok(Self {
-            hostname: hostname.to_owned(),
+            hostname: WildMatch::new(hostname),
             handler,
             certificates: load_certs(Path::new(certificate))?,
             key: load_key(Path::new(key))?,
@@ -121,7 +123,7 @@ impl Handler for LazyTlsHandler {
         let (certificates, key, handler) = if let Some(sni) = self
             .sni
             .iter()
-            .find(|s| acceptor.client_hello().server_name() == Some(s.hostname.as_str()))
+            .find(|s| acceptor.client_hello().server_name().map_or(false, |x| s.hostname.matches(x)))
         {
             (&sni.certificates, &sni.key, &sni.handler)
         } else {
