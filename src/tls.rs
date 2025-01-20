@@ -25,8 +25,7 @@ use crate::settings;
 pub struct SniHandler {
     hostname: WildMatch,
     handler: SendableHandler,
-    certificates: Vec<CertificateDer<'static>>,
-    key: PrivateKeyDer<'static>
+    config: Arc<ServerConfig>
 }
 
 pub struct TlsHandler {
@@ -38,9 +37,8 @@ pub struct TlsHandler {
 pub struct LazyTlsHandler {
     handler: SendableHandler,
     ktls: bool,
-    certificates: Vec<CertificateDer<'static>>,
     sni: Vec<SniHandler>,
-    key: PrivateKeyDer<'static>
+    config: Arc<ServerConfig>
 }
 
 impl SniHandler {
@@ -49,35 +47,26 @@ impl SniHandler {
         handler: SendableHandler,
         certificate: &str,
         key: &str,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, rustls::Error> {
+        let config = Arc::new(create_config(Path::new(certificate), Path::new(key), handler.alpn_protocols(), true)?);
+
         Ok(Self {
             hostname: WildMatch::new(hostname),
             handler,
-            certificates: load_certs(Path::new(certificate))?,
-            key: load_key(Path::new(key))?,
+            config
         })
     }
 }
 
 impl TlsHandler {
     pub fn new(settings: &settings::Tls, handler: SendableHandler) -> Result<Self, rustls::Error> {
-        let certificates = load_certs(Path::new(&settings.certificate)).unwrap();
-        let key = load_key(Path::new(&settings.key)).unwrap();
-
-        let mut config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certificates, key)?;
-
-        config.enable_secret_extraction = true;
-
-        if let Some(protocols) = handler.alpn_protocols() {
-            config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
-        }
+        let ktls = settings.ktls.unwrap_or(false);
+        let config = create_config(Path::new(&settings.certificate), Path::new(&settings.key), handler.alpn_protocols(), ktls)?;
 
         Ok(Self {
             acceptor: TlsAcceptor::from(Arc::new(config)),
-            ktls: settings.ktls.unwrap_or(false),
-            handler
+            ktls,
+            handler,
         })
     }
 }
@@ -87,13 +76,15 @@ impl LazyTlsHandler {
         settings: &settings::Tls,
         handler: SendableHandler,
         sni: Vec<SniHandler>,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, rustls::Error> {
+        let ktls = settings.ktls.unwrap_or(false);
+        let config = Arc::new(create_config(Path::new(&settings.certificate), Path::new(&settings.key), handler.alpn_protocols(), ktls)?);
+
         Ok(Self {
-            ktls: settings.ktls.unwrap_or(false),
+            ktls,
             handler,
             sni,
-            certificates: load_certs(Path::new(&settings.certificate))?,
-            key: load_key(Path::new(&settings.key))?
+            config
         })
     }
 }
@@ -120,27 +111,17 @@ impl Handler for LazyTlsHandler {
     async fn handle(&self, stream: ProxyStream, mut ctx: Context) -> Result<(), Box<dyn Error>> {
         let acceptor = LazyConfigAcceptor::new(Acceptor::default(), CorkStream::new(stream)).await?;
 
-        let (certificates, key, handler) = if let Some(sni) = self
+        let (config, handler) = if let Some(sni) = self
             .sni
             .iter()
             .find(|s| acceptor.client_hello().server_name().map_or(false, |x| s.hostname.matches(x)))
         {
-            (&sni.certificates, &sni.key, &sni.handler)
+            (&sni.config, &sni.handler)
         } else {
-            (&self.certificates, &self.key, &self.handler)
+            (&self.config, &self.handler)
         };
 
-        let mut config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certificates.clone(), key.clone_key())?;
-
-        config.enable_secret_extraction = true;
-
-        if let Some(protocols) = handler.alpn_protocols() {
-            config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
-        }
-
-        let stream = acceptor.into_stream(Arc::new(config)).await?;
+        let stream = acceptor.into_stream(config.clone()).await?;
         let (_, conn) = stream.get_ref();
         ctx.secure = true;
         ctx.alpn = conn.alpn_protocol().clone().map(|s| String::from_utf8(s.to_vec())).transpose()?;
@@ -155,10 +136,20 @@ impl Handler for LazyTlsHandler {
     }
 }
 
-fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
-    certs(&mut BufReader::new(File::open(path)?)).collect()
-}
+fn create_config(certificates: &Path, key: &Path, alpn: Option<Vec<String>>, ktls: bool) -> Result<ServerConfig, rustls::Error> {
+    let certificates = certs(&mut BufReader::new(File::open(certificates).unwrap())).collect::<Result<Vec<_>, _>>().unwrap();
+    let key = private_key(&mut BufReader::new(File::open(key).unwrap()))
+        .and_then(|x| x.ok_or(io::Error::new(ErrorKind::InvalidData, "No private key"))).unwrap();
 
-fn load_key(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
-    private_key(&mut BufReader::new(File::open(path)?)).and_then(|x| x.ok_or(io::Error::new(ErrorKind::InvalidData, "No private key")))
+    let mut config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certificates, key)?;
+
+    config.enable_secret_extraction = ktls;
+
+    if let Some(protocols) = alpn {
+        config.alpn_protocols.extend(protocols.iter().map(|x| x.as_str().into()));
+    }
+
+    Ok(config)
 }
